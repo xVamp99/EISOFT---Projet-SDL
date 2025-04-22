@@ -1,0 +1,479 @@
+//-------------game.h--------------------//
+#ifndef GAME_H
+#define GAME_H
+
+#include <SDL/SDL.h>
+#include <SDL/SDL_image.h>
+#include <SDL/SDL_ttf.h>
+#include <SDL/SDL_mixer.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#define SCREEN_WIDTH 1860
+#define SCREEN_HEIGHT 864
+#define BG_WIDTH 4913
+#define BG_HEIGHT 922
+#define HERO_SPEED 6
+
+typedef struct {
+    SDL_Surface* sprite;
+    SDL_Rect pos;
+    SDL_Rect frame_rect;
+    int current_frame;
+    int health;
+    bool is_jumping;
+    int jump_start_time;
+    int jump_height;
+    bool is_dead;
+    bool is_attacking;
+} Enemy;
+
+typedef struct {
+    SDL_Surface* sprite;
+    SDL_Surface* projectiles[4];
+    SDL_Rect screen_pos;
+    bool is_shooting;
+    SDL_Rect projectile_pos[4];
+} Hero;
+
+typedef struct {
+    SDL_Surface* bg;
+    int scroll_speed;
+} Background;
+
+typedef struct {
+    SDL_Surface* screen;
+    TTF_Font* font;
+    Mix_Music* game_music;
+    Mix_Music* gameover_music;
+    Mix_Music* menu_music;
+    Mix_Chunk* sabre_sound;
+    Mix_Chunk* pain_sound;
+    Hero hero;
+    Enemy enemy;
+    Background background;
+    int level;
+    bool running;
+    int camera_x;
+    bool game_over_sound_played;
+} GameState;
+
+// Fonctions d'initialisation
+void init_hero(Hero* h);
+void init_enemy(Enemy* e);
+void init_background(Background* bg);
+
+// Fonctions utilitaires
+SDL_Surface* load_image(const char* path);
+void render_text(SDL_Surface* screen, const char* text, int x, int y, SDL_Color color, TTF_Font* font);
+bool check_collision(SDL_Rect a, SDL_Rect b);
+void update_enemy_frame(Enemy* e, int line);
+void handle_projectile(Hero* h);
+
+// Fonctions du menu
+int show_menu(SDL_Surface* screen, SDL_Surface* bg, TTF_Font* font, Mix_Music* menu_music);
+
+#endif
+//-----------game.c-------------//
+#include "game.h"
+
+SDL_Surface* load_image(const char* path) {
+    SDL_Surface* loaded = IMG_Load(path);
+    if (!loaded) {
+        printf("Erreur chargement %s: %s\n", path, IMG_GetError());
+        exit(1);
+    }
+    return loaded;
+}
+
+void render_text(SDL_Surface* screen, const char* text, int x, int y, SDL_Color color, TTF_Font* font) {
+    SDL_Surface* text_surface = TTF_RenderText_Solid(font, text, color);
+    SDL_Rect pos = { x, y };
+    SDL_BlitSurface(text_surface, NULL, screen, &pos);
+    SDL_FreeSurface(text_surface);
+}
+
+bool check_collision(SDL_Rect a, SDL_Rect b) {
+    return (a.x + a.w > b.x && a.x < b.x + b.w &&
+            a.y + a.h > b.y && a.y < b.y + b.h);
+}
+
+void init_enemy(Enemy* e) {
+    e->sprite = load_image("assets/enemy_spritesheet.png");
+    e->pos.x = BG_WIDTH - 500;
+    e->pos.y = SCREEN_HEIGHT - 300;
+    e->frame_rect.w = 182;
+    e->frame_rect.h = 229;
+    e->frame_rect.x = 0;
+    e->frame_rect.y = 0;
+    e->current_frame = 0;
+    e->health = 100;
+    e->is_jumping = false;
+    e->jump_start_time = 0;
+    e->jump_height = 100;
+    e->is_dead = false;
+    e->is_attacking = false;
+}
+
+void init_hero(Hero* h) {
+    h->sprite = load_image("assets/hero.png");
+    h->screen_pos.x = 100;
+    h->screen_pos.y = SCREEN_HEIGHT - 405;
+    h->is_shooting = false;
+
+    for (int i = 0; i < 4; i++) {
+        char path[50];
+        sprintf(path, "assets/projectile_%d.png", i + 1);
+        h->projectiles[i] = load_image(path);
+    }
+
+    for (int i = 0; i < 4; i++) {
+        h->projectile_pos[i].x = -100;
+        h->projectile_pos[i].y = -100;
+    }
+}
+
+void init_background(Background* bg) {
+    bg->bg = load_image("assets/background.png");
+    bg->scroll_speed = 3;
+}
+
+void update_enemy_frame(Enemy* e, int line) {
+    e->current_frame = (e->current_frame + 1) % 4;
+    e->frame_rect.x = e->current_frame * e->frame_rect.w;
+    e->frame_rect.y = line * e->frame_rect.h;
+}
+
+void handle_projectile(Hero* h) {
+    if (h->is_shooting) {
+        for (int i = 0; i < 4; i++) {
+            if (h->projectile_pos[i].x == -100) {
+                h->projectile_pos[i].x = h->screen_pos.x + 50;
+                h->projectile_pos[i].y = h->screen_pos.y + 110;
+                break;
+            }
+        }
+        h->is_shooting = false;
+    }
+
+    for (int i = 0; i < 4; i++) {
+        if (h->projectile_pos[i].x != -100) {
+            h->projectile_pos[i].x += 10;
+            if (h->projectile_pos[i].x > SCREEN_WIDTH) {
+                h->projectile_pos[i].x = -100;
+            }
+        }
+    }
+}
+//----------------menu.c-------------------//
+#include "game.h"
+
+int show_menu(SDL_Surface* screen, SDL_Surface* bg, TTF_Font* font, Mix_Music* menu_music) {
+    if (!menu_music) {
+        printf("Erreur chargement musique: %s\n", Mix_GetError());
+    } else {
+        Mix_PlayMusic(menu_music, -1);
+    }
+
+    SDL_Event event;
+    SDL_Color white = {255, 255, 255};
+    SDL_Rect level1_btn = {700, 300, 400, 80};
+    SDL_Rect level2_btn = {700, 450, 400, 80};
+    int choice = 0;
+
+    bool menu_running = true;
+    while (menu_running) {
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) exit(0);
+            if (event.type == SDL_MOUSEBUTTONDOWN) {
+                int x = event.button.x;
+                int y = event.button.y;
+                if (x >= level1_btn.x && x <= level1_btn.x + level1_btn.w &&
+                    y >= level1_btn.y && y <= level1_btn.y + level1_btn.h) {
+                    choice = 1;
+                    menu_running = false;
+                } else if (x >= level2_btn.x && x <= level2_btn.x + level2_btn.w &&
+                           y >= level2_btn.y && y <= level2_btn.y + level2_btn.h) {
+                    choice = 2;
+                    menu_running = false;
+                }
+            }
+        }
+
+        SDL_BlitSurface(bg, NULL, screen, NULL);
+        SDL_FillRect(screen, &level1_btn, SDL_MapRGB(screen->format, 150, 0, 150));
+        SDL_FillRect(screen, &level2_btn, SDL_MapRGB(screen->format, 150, 0, 150));
+        render_text(screen, "LEVEL 1", level1_btn.x + 130, level1_btn.y + 25, white, font);
+        render_text(screen, "LEVEL 2", level2_btn.x + 130, level2_btn.y + 25, white, font);
+
+        SDL_Flip(screen);
+        SDL_Delay(16);
+    }
+
+    if (menu_music) {
+        Mix_HaltMusic();
+    }
+
+    return choice;
+}
+//---------------main.c---------------------------//
+#include "game.h"
+
+void initialize_game(GameState* game) {
+    SDL_Init(SDL_INIT_VIDEO);
+    TTF_Init();
+    Mix_Init(MIX_INIT_MP3);
+    srand((unsigned int)time(NULL));
+
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
+        printf("Erreur initialisation audio: %s\n", Mix_GetError());
+    }
+
+    game->screen = SDL_SetVideoMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, SDL_HWSURFACE);
+    if (!game->screen) {
+        printf("Erreur création écran : %s\n", SDL_GetError());
+        exit(1);
+    }
+
+    game->font = TTF_OpenFont("assets/TOUGHWALL.ttf", 48);
+    if (!game->font) {
+        printf("Erreur chargement font : %s\n", TTF_GetError());
+        exit(1);
+    }
+
+    // Chargement des sons
+    game->game_music = Mix_LoadMUS("assets/gamesound.mp3");
+    game->gameover_music = Mix_LoadMUS("assets/gameover.mp3");
+    game->menu_music = Mix_LoadMUS("assets/lobby.mp3");
+    game->sabre_sound = Mix_LoadWAV("assets/sabre.mp3");
+    game->pain_sound = Mix_LoadWAV("assets/pain.mp3");
+    
+    if (!game->game_music) printf("Erreur chargement gamesound.mp3: %s\n", Mix_GetError());
+    if (!game->gameover_music) printf("Erreur chargement gameover.mp3: %s\n", Mix_GetError());
+    if (!game->sabre_sound) printf("Erreur chargement sabre.mp3: %s\n", Mix_GetError());
+    if (!game->pain_sound) printf("Erreur chargement pain.mp3: %s\n", Mix_GetError());
+
+    // Initialisation des éléments du jeu
+    init_hero(&game->hero);
+    init_enemy(&game->enemy);
+    init_background(&game->background);
+    
+    game->running = true;
+    game->camera_x = 0;
+    game->game_over_sound_played = false;
+}
+
+void cleanup_game(GameState* game) {
+    // Nettoyage des ressources audio
+    if (game->game_music) Mix_FreeMusic(game->game_music);
+    if (game->gameover_music) Mix_FreeMusic(game->gameover_music);
+    if (game->menu_music) Mix_FreeMusic(game->menu_music);
+    if (game->sabre_sound) Mix_FreeChunk(game->sabre_sound);
+    if (game->pain_sound) Mix_FreeChunk(game->pain_sound);
+
+    TTF_CloseFont(game->font);
+    Mix_CloseAudio();
+    TTF_Quit();
+    SDL_Quit();
+}
+
+void handle_events(GameState* game) {
+    SDL_Event event;
+    static bool projectile_launched = false;
+
+    while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_QUIT) {
+            game->running = false;
+        }
+
+        if (event.type == SDL_KEYDOWN) {
+            if (event.key.keysym.sym == SDLK_SPACE && !projectile_launched) {
+                game->hero.is_shooting = true;
+                projectile_launched = true;
+            }
+            if (event.key.keysym.sym == SDLK_RIGHT) {
+                game->hero.screen_pos.x += HERO_SPEED;
+                if (game->hero.screen_pos.x > SCREEN_WIDTH - game->hero.sprite->w) {
+                    game->hero.screen_pos.x = SCREEN_WIDTH - game->hero.sprite->w;
+                }
+            }
+            if (event.key.keysym.sym == SDLK_LEFT) {
+                game->hero.screen_pos.x -= HERO_SPEED;
+                if (game->hero.screen_pos.x < 0) {
+                    game->hero.screen_pos.x = 0;
+                }
+            }
+        }
+
+        if (event.type == SDL_KEYUP) {
+            if (event.key.keysym.sym == SDLK_SPACE) {
+                projectile_launched = false;
+            }
+        }
+    }
+}
+
+void update_game(GameState* game) {
+    static Uint32 last_enemy_frame_time = 0;
+    int enemy_frame_delay = 150;
+    Uint32 current_time = SDL_GetTicks();
+
+    if (!game->enemy.is_dead) {
+        if (abs(game->enemy.pos.x - game->hero.screen_pos.x - game->camera_x) < 300) {
+            game->enemy.is_jumping = false;
+            
+            if (game->enemy.pos.x > game->hero.screen_pos.x + game->camera_x + 50) {
+                game->enemy.pos.x -= 3;
+            } else if (game->enemy.pos.x < game->hero.screen_pos.x + game->camera_x - 50) {
+                game->enemy.pos.x += 3;
+            }
+            
+            if (abs(game->enemy.pos.x - (game->hero.screen_pos.x + game->camera_x)) < 100 && 
+                abs(game->enemy.pos.y - game->hero.screen_pos.y) < 100) {
+                if (!game->enemy.is_attacking) {
+                    game->enemy.is_attacking = true;
+                    if (game->sabre_sound) {
+                        Mix_PlayChannel(-1, game->sabre_sound, 0);
+                    }
+                }
+            } else {
+                game->enemy.is_attacking = false;
+            }
+        } else {
+            game->enemy.pos.x -= 2;
+            if (game->enemy.pos.x < 0) game->enemy.pos.x = BG_WIDTH - 200;
+
+            if (game->level == 2 && !game->enemy.is_jumping && rand() % 100 < 3) {
+                game->enemy.is_jumping = true;
+                game->enemy.jump_start_time = current_time;
+            }
+            
+            game->enemy.is_attacking = false;
+        }
+
+        if (game->level == 2 && game->enemy.is_jumping) {
+            int elapsed = current_time - game->enemy.jump_start_time;
+            if (elapsed < 300)
+                game->enemy.pos.y = (SCREEN_HEIGHT - 300) - (game->enemy.jump_height * elapsed) / 300;
+            else if (elapsed < 600)
+                game->enemy.pos.y = (SCREEN_HEIGHT - 300) - game->enemy.jump_height + (game->enemy.jump_height * (elapsed - 300)) / 300;
+            else {
+                game->enemy.pos.y = SCREEN_HEIGHT - 300;
+                game->enemy.is_jumping = false;
+            }
+        }
+
+        if (current_time - last_enemy_frame_time >= enemy_frame_delay) {
+            if (game->enemy.health <= 0) {
+                game->enemy.current_frame = (game->enemy.current_frame + 1) % 4;
+                game->enemy.frame_rect.x = game->enemy.current_frame * game->enemy.frame_rect.w;
+                game->enemy.frame_rect.y = 3 * game->enemy.frame_rect.h;
+                game->enemy.is_dead = (game->enemy.current_frame == 3);
+                
+                if (game->enemy.is_dead && !game->game_over_sound_played) {
+                    if (game->game_music) {
+                        Mix_HaltMusic();
+                    }
+                    if (game->gameover_music) {
+                        Mix_PlayMusic(game->gameover_music, 0);
+                    }
+                    game->game_over_sound_played = true;
+                }
+            } else if (game->enemy.is_attacking) {
+                update_enemy_frame(&game->enemy, 2);
+            } else if (game->enemy.is_jumping) {
+                update_enemy_frame(&game->enemy, 1);
+            } else {
+                update_enemy_frame(&game->enemy, 0);
+            }
+            last_enemy_frame_time = current_time;
+        }
+
+        SDL_Rect enemy_rect = { game->enemy.pos.x, game->enemy.pos.y, game->enemy.frame_rect.w, game->enemy.frame_rect.h };
+        for (int i = 0; i < 4; i++) {
+            SDL_Rect proj = game->hero.projectile_pos[i];
+            SDL_Rect proj_rect = { proj.x + game->camera_x, proj.y, 32, 32 };
+            if (game->hero.projectile_pos[i].x != -100 && check_collision(proj_rect, enemy_rect)) {
+                game->enemy.health -= 20;
+                game->hero.projectile_pos[i].x = -100;
+                if (game->pain_sound) {
+                    Mix_PlayChannel(-1, game->pain_sound, 0);
+                }
+                if (game->enemy.health <= 0) {
+                    game->enemy.health = 0;
+                    break;
+                }
+            }
+        }
+    }
+
+    handle_projectile(&game->hero);
+
+    // Mise à jour de la caméra
+    int target_camera_x = game->enemy.pos.x - SCREEN_WIDTH / 2;
+    if (target_camera_x < 0) target_camera_x = 0;
+    if (target_camera_x > BG_WIDTH - SCREEN_WIDTH) target_camera_x = BG_WIDTH - SCREEN_WIDTH;
+    game->camera_x += (target_camera_x - game->camera_x) / 10;
+}
+
+void render_game(GameState* game) {
+    SDL_FillRect(game->screen, NULL, 0);
+    
+    // Dessiner le fond
+    SDL_Rect scroll_rect = { game->camera_x, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
+    SDL_BlitSurface(game->background.bg, &scroll_rect, game->screen, NULL);
+
+    // Dessiner le héros
+    SDL_BlitSurface(game->hero.sprite, NULL, game->screen, &game->hero.screen_pos);
+
+    // Dessiner l'ennemi
+    SDL_Rect enemy_screen_pos = { game->enemy.pos.x - game->camera_x, game->enemy.pos.y };
+    SDL_BlitSurface(game->enemy.sprite, &game->enemy.frame_rect, game->screen, &enemy_screen_pos);
+
+    // Dessiner les projectiles
+    for (int i = 0; i < 4; i++) {
+        if (game->hero.projectile_pos[i].x != -100) {
+            SDL_BlitSurface(game->hero.projectiles[i], NULL, game->screen, &game->hero.projectile_pos[i]);
+        }
+    }
+
+    // Dessiner les coeurs (vie de l'ennemi)
+    SDL_Surface* heart = load_image("assets/coeur.png");
+    int hearts_to_show = game->enemy.health / 20;
+    for (int i = 0; i < hearts_to_show; i++) {
+        SDL_Rect heart_pos = { SCREEN_WIDTH - 200 - i * 50, 20 };
+        SDL_BlitSurface(heart, NULL, game->screen, &heart_pos);
+    }
+    SDL_FreeSurface(heart);
+
+    SDL_Flip(game->screen);
+    SDL_Delay(30);
+}
+
+int main() {
+    GameState game;
+    
+    initialize_game(&game);
+    
+    // Afficher le menu
+    SDL_Surface* menu_bg = load_image("assets/menu_background.png");
+    game.level = show_menu(game.screen, menu_bg, game.font, game.menu_music);
+    SDL_FreeSurface(menu_bg);
+
+    // Démarrer la musique de jeu
+    if (game.game_music) {
+        Mix_PlayMusic(game.game_music, -1);
+    }
+
+    // Boucle principale du jeu
+    while (game.running) {
+        handle_events(&game);
+        update_game(&game);
+        render_game(&game);
+    }
+
+    cleanup_game(&game);
+    return 0;
+}
