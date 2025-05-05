@@ -7,13 +7,13 @@
 #include <string.h>
 #include <stdbool.h>
 
-#define SCREEN_WIDTH  1637
-#define SCREEN_HEIGHT 920
+#define SCREEN_WIDTH  1190
+#define SCREEN_HEIGHT 668
 #define MAX_TEXT_LENGTH 20
 #define MAX_SCORES 10
 #define SCORE_FILE "scores.dat"
 #define MUSIC_FILE "ogmusic.mp3"
-#define SCROLL_SPEED 10
+#define SCROLL_SPEED 2 // Adjusted scroll speed
 
 typedef struct {
     char name[MAX_TEXT_LENGTH];
@@ -112,7 +112,7 @@ void initSDL() {
         SDL_Quit();
         exit(EXIT_FAILURE);
     }
-    SDL_WM_SetCaption("Game Title", NULL);
+    SDL_WM_SetCaption("Reflection", NULL);
 
     background = IMG_Load("image1.png");
     submitButton = IMG_Load("Submit.png");
@@ -121,7 +121,6 @@ void initSDL() {
     backButtonHover = IMG_Load("HoverBack.png");
     ExitButton = IMG_Load("Exit.png");
     ExitButtonHover = IMG_Load("HoverExit.png");
-
     if (!background || !submitButton || !backButton || !ExitButton || !submitButtonHover || !backButtonHover || !ExitButtonHover) {
         fprintf(stderr, "Erreur chargement images: %s\n", IMG_GetError());
         exit(EXIT_FAILURE);
@@ -242,6 +241,7 @@ void handleNicknameEvents(SDL_Event* event, bool* running, char* inputText, int*
 void renderNicknameScreen(SDL_Surface* screen, SDL_Surface* background, SDL_Surface* texte, SDL_Surface* submitButton, SDL_Surface* backButton, SDL_Surface* inputTextSurface, SDL_Rect inputRect, SDL_Rect textRect, char* inputText) {
     SDL_BlitSurface(background, NULL, screen, NULL);
     SDL_BlitSurface(texte, NULL, screen, &textRect);
+
     SDL_FillRect(screen, &inputRect, SDL_MapRGB(screen->format, 255, 255, 255));
 
     if (submitButtonHovered) {
@@ -391,8 +391,26 @@ bool isMouseOver(int x, int y, SDL_Rect rect) {
 
 void initGameScreen() {
     initBackground(&gameBackground, "back1.bmp");
-    initPlayer(&player1, "player1.bmp", 50, 300);
-    initPlayer(&player2, "player2.bmp", 100, 300);
+
+    // Initialize player 1 on the left side
+    initPlayer(&player1, "player1.png", 50, 380);
+
+    // Initialize player 2 on the right side
+    initPlayer(&player2, "player2.png", SCREEN_WIDTH / 2 + 50, 380);
+
+    gameBackground.camera1.w = SCREEN_WIDTH / 2;
+    gameBackground.camera1.h = SCREEN_HEIGHT;
+    gameBackground.camera1.x = 0; // Start at the beginning for player 1
+
+    gameBackground.camera2.w = SCREEN_WIDTH / 2;
+    gameBackground.camera2.h = SCREEN_HEIGHT;
+    gameBackground.camera2.x = 0; // Also start at the beginning for player 2's camera, it will scroll independently
+
+    gameBackground.screen_pos1.x = 0;
+    gameBackground.screen_pos1.y = 0;
+
+    gameBackground.screen_pos2.x = SCREEN_WIDTH / 2;
+    gameBackground.screen_pos2.y = 0;
 }
 
 void handleGameEvents(SDL_Event* event, bool* running) {
@@ -406,39 +424,57 @@ void handleGameEvents(SDL_Event* event, bool* running) {
 
     // Player 1 movement
     if (keys[SDLK_RIGHT]) {
-        if (player1.pos.x > gameBackground.camera1.x + SCREEN_WIDTH / 4)
-            scrolling(&gameBackground.camera1, &player1, 0, gameBackground.image->w, gameBackground.image->h);
-        else
+        // Scrolling Background
+        if (player1.pos.x > SCREEN_WIDTH / 4 && gameBackground.camera1.x < gameBackground.image->w / 2 - gameBackground.camera1.w) {
+            scrolling(&gameBackground.camera1, &player1, 0, gameBackground.image->w / 2, gameBackground.image->h);
+        }
+        // Keep Player1 visible, move only if not at right edge of split screen
+        if (player1.pos.x < SCREEN_WIDTH / 2 - player1.sprite->w) {
             player1.pos.x += SCROLL_SPEED;
+        }
     }
     if (keys[SDLK_LEFT]) {
-        if (player1.pos.x < gameBackground.camera1.x + SCREEN_WIDTH / 4)
-            scrolling(&gameBackground.camera1, &player1, 1, gameBackground.image->w, gameBackground.image->h);
-        else
+        // Scrolling Background
+        if (player1.pos.x < SCREEN_WIDTH / 4 && gameBackground.camera1.x > 0) {
+            scrolling(&gameBackground.camera1, &player1, 1, gameBackground.image->w / 2, gameBackground.image->h);
+        }
+
+        //Keep Player1 visible, move only if not at left edge of screen
+        if (player1.pos.x > 0) {
             player1.pos.x -= SCROLL_SPEED;
+        }
     }
 
     // Player 2 movement
     if (keys[SDLK_d]) {
-        if (player2.pos.x > gameBackground.camera2.x + SCREEN_WIDTH / 4)
-            scrolling(&gameBackground.camera2, &player2, 0, gameBackground.image->w, gameBackground.image->h);
-        else
+        // Scrolling Background
+        if (player2.pos.x > SCREEN_WIDTH / 2 + SCREEN_WIDTH / 4 && gameBackground.camera2.x < gameBackground.image->w / 2 - gameBackground.camera2.w) {
+            scrolling(&gameBackground.camera2, &player2, 0, gameBackground.image->w / 2, gameBackground.image->h);
+        }
+        //Keep Player 2 visible
+        if (player2.pos.x < SCREEN_WIDTH - player2.sprite->w) {
             player2.pos.x += SCROLL_SPEED;
+        }
     }
     if (keys[SDLK_a]) {
-        if (player2.pos.x < gameBackground.camera2.x + SCREEN_WIDTH / 4)
-            scrolling(&gameBackground.camera2, &player2, 1, gameBackground.image->w, gameBackground.image->h);
-        else
+        // Scrolling Background
+        if (player2.pos.x < SCREEN_WIDTH / 2 + SCREEN_WIDTH / 4 && gameBackground.camera2.x > 0) {
+            scrolling(&gameBackground.camera2, &player2, 1, gameBackground.image->w / 2, gameBackground.image->h);
+        }
+        //Keep Player 2 visible
+        if (player2.pos.x > SCREEN_WIDTH / 2) {
             player2.pos.x -= SCROLL_SPEED;
+        }
     }
 
     // Check win conditions
-    if (player1.pos.x + player1.sprite->w >= gameBackground.image->w) {
+    if (gameBackground.camera1.x + gameBackground.camera1.w >= gameBackground.image->w / 2 && player1.pos.x + player1.sprite->w >= SCREEN_WIDTH/2) {
         addScore(playerName, 150);
         currentState = BEST_SCORE_SCREEN;
     }
-    if (player2.pos.x + player2.sprite->w >= gameBackground.image->w) {
-         addScore(playerName, 100);
+
+    if (gameBackground.camera2.x + gameBackground.camera2.w >= gameBackground.image->w / 2 && player2.pos.x + player2.sprite->w >= SCREEN_WIDTH) {
+        addScore(playerName, 100);
         currentState = BEST_SCORE_SCREEN;
     }
 }
@@ -451,10 +487,9 @@ void renderGameScreen(SDL_Surface* screen) {
 void initBackground(Background *bg, const char *path) {
     bg->image = SDL_LoadBMP(path);
     if (!bg->image) {
-        printf("Failed to load background image: %s\n", SDL_GetError());
-        exit(1);
+        fprintf(stderr, "Failed to load background image %s: %s\n", path, SDL_GetError());
+        exit(EXIT_FAILURE);
     }
-
     bg->camera1.x = 0;
     bg->camera1.y = 0;
     bg->camera1.w = SCREEN_WIDTH / 2;
@@ -473,80 +508,85 @@ void initBackground(Background *bg, const char *path) {
 }
 
 void initPlayer(Player *p, const char *spritePath, int x, int y) {
-    p->sprite = SDL_LoadBMP(spritePath);
+    p->sprite = IMG_Load(spritePath);
     if (!p->sprite) {
-        printf("Failed to load player sprite: %s\n", SDL_GetError());
-        exit(1);
+        fprintf(stderr, "Failed to load player sprite %s: %s\n", spritePath, IMG_GetError());
+        exit(EXIT_FAILURE);
     }
-    SDL_SetColorKey(p->sprite, SDL_SRCCOLORKEY, SDL_MapRGB(p->sprite->format, 255, 0, 255));
     p->pos.x = x;
     p->pos.y = y;
-}
-
-void handleInput(int *keys, SDL_Event *event) {
-    if (event->type == SDL_KEYDOWN)
-        keys[event->key.keysym.sym] = 1;
-    else if (event->type == SDL_KEYUP)
-        keys[event->key.keysym.sym] = 0;
+    p->pos.w = p->sprite->w;
+    p->pos.h = p->sprite->h;
 }
 
 void scrolling(SDL_Rect *camera, Player *p, int direction, int bg_width, int bg_height) {
-    if (direction == 0 && camera->x + camera->w < bg_width)
+    if (direction == 0) { // Right
         camera->x += SCROLL_SPEED;
-    else if (direction == 1 && camera->x > 0)
+        if (camera->x + camera->w > bg_width)
+            camera->x = bg_width - camera->w;
+    } else if (direction == 1) { // Left
         camera->x -= SCROLL_SPEED;
-    else if (direction == 2 && camera->y > 0)
-        camera->y -= SCROLL_SPEED;
-    else if (direction == 3 && camera->y + camera->h < bg_height)
-        camera->y += SCROLL_SPEED;
+        if (camera->x < 0)
+            camera->x = 0;
+    }
 }
 
 void render(SDL_Surface *screen, Background *bg, Player *p1, Player *p2) {
     SDL_BlitSurface(bg->image, &bg->camera1, screen, &bg->screen_pos1);
+    SDL_BlitSurface(p1->sprite, NULL, screen, &p1->pos);
+
     SDL_BlitSurface(bg->image, &bg->camera2, screen, &bg->screen_pos2);
+    SDL_BlitSurface(p2->sprite, NULL, screen, &p2->pos);
+}
 
-    SDL_Rect drawP1 = { p1->pos.x - bg->camera1.x, p1->pos.y - bg->camera1.y };
-    SDL_Rect drawP2 = { p2->pos.x - bg->camera2.x + SCREEN_WIDTH / 2, p2->pos.y - bg->camera2.y };
-
-    SDL_BlitSurface(p1->sprite, NULL, screen, &drawP1);
-    SDL_BlitSurface(p2->sprite, NULL, screen, &drawP2);
+void handleInput(int *keys, SDL_Event *event) {
+    if (event->type == SDL_KEYDOWN) {
+        keys[event->key.keysym.sym] = 1;
+    } else if (event->type == SDL_KEYUP) {
+        keys[event->key.keysym.sym] = 0;
+    }
 }
 
 int main(int argc, char* argv[]) {
+    bool running = true;
+    SDL_Event event;
+    char inputText[MAX_TEXT_LENGTH] = "";
+    int cursorPos = 0;
+    bool typing = false;
+    SDL_Color textColor = {0, 0, 0, 0};
+    SDL_Color textColor2 = {255, 255, 255, 255};
+    SDL_Rect inputRect = {(SCREEN_WIDTH - 303) / 2, 180, 303, 60};
+    SDL_Rect textRect = {(SCREEN_WIDTH - 600) / 2 + 150, 50, 600, 50};
+    SDL_Rect textRect2 = {(SCREEN_WIDTH - 600) / 2 + 200, 50, 600, 50};
+
     initSDL();
     loadScores();
     playMusic();
 
-    SDL_Event event;
-    bool running = true;
-    char inputText[MAX_TEXT_LENGTH] = "";
-    int cursorPos = 0;
-    bool typing = false;
-
-    SDL_Color textColor = {0, 0, 0};
-    SDL_Rect textRect = { (SCREEN_WIDTH - 303) / 2, 100, 303, 50 };
-    SDL_Rect inputRect = { (SCREEN_WIDTH - 303) / 2, 180, 303, 60 };
-
-    texte = TTF_RenderText_Solid(textFont, "Enter Your Name:", textColor);
-
     while (running) {
         switch (currentState) {
             case NICKNAME_SCREEN:
-                SDL_FreeSurface(inputTextSurface);
-                inputTextSurface = TTF_RenderText_Solid(inputFont, inputText, textColor);
+                SDL_FillRect(screen, &screen->clip_rect, SDL_MapRGB(screen->format, 0xFF, 0xFF, 0xFF));
+                SDL_FreeSurface(texte);
+                texte = TTF_RenderText_Blended(textFont, "Enter Your Name:", textColor2);
+                SDL_BlitSurface(background, NULL, screen, NULL);
                 handleNicknameEvents(&event, &running, inputText, &cursorPos, &typing);
+                SDL_FreeSurface(inputTextSurface);
+                inputTextSurface = TTF_RenderText_Blended(inputFont, inputText, textColor);
                 renderNicknameScreen(screen, background, texte, submitButton, backButton, inputTextSurface, inputRect, textRect, inputText);
                 break;
             case BEST_SCORE_SCREEN:
+                SDL_FillRect(screen, &screen->clip_rect, SDL_MapRGB(screen->format, 0xFF, 0xFF, 0xFF));
+                SDL_FreeSurface(texte);
+                texte = TTF_RenderText_Blended(textFont, "High Scores", textColor2);
                 handleBestScoreEvents(&event, &running);
-                renderBestScoreScreen(screen, background, texte, backButton, ExitButton, textRect);
+                renderBestScoreScreen(screen, background, texte, backButton, ExitButton, textRect2);
                 break;
             case GAME_SCREEN:
                 handleGameEvents(&event, &running);
                 renderGameScreen(screen);
                 break;
         }
-        SDL_Delay(16);
     }
 
     cleanupSDL();

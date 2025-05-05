@@ -3,8 +3,8 @@
 #include <stdlib.h>
 #include <SDL/SDL_image.h>
 
-#define SCREEN_WIDTH 1637
-#define SCREEN_HEIGHT 920
+#define SCREEN_WIDTH 1190
+#define SCREEN_HEIGHT 668
 #define SCROLL_SPEED 10
 
 typedef struct {
