@@ -1,0 +1,2 @@
+gcc main.c menu.c -o mygame -lSDL -lSDL_image -lSDL_mixer -lSDL_ttf
+
