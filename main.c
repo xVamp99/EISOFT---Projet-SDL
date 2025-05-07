@@ -1,43 +1,33 @@
 #include <SDL/SDL.h>
-#include <SDL/SDL_ttf.h>
 #include <SDL/SDL_image.h>
 #include <SDL/SDL_mixer.h>
+#include <SDL/SDL_ttf.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
 #include <string.h>
+#include <time.h>
 
+// Screen dimensions
 #define WINDOW_WIDTH 1297
 #define WINDOW_HEIGHT 749
+#define HELP_WIDTH 670
+#define HELP_HEIGHT 500
+
+// Game constants
 #define MAX_QUESTIONS 100
 #define MAX_LINE_LENGTH 256
 #define BUTTON_WIDTH 400
 #define BUTTON_HEIGHT 80
 #define BUTTON_SPACING 20
-#define QUESTION_Y 150
-#define ANSWERS_Y 300
 #define TIMER_HEIGHT 20
 #define TIMER_WIDTH 500
-#define TIMER_Y 80
 #define TIMER_DURATION 30
-#define BEEP_INTERVAL_START 2000
-#define BEEP_INTERVAL_MIN 200
 #define NEXT_BUTTON_WIDTH 200
 #define NEXT_BUTTON_HEIGHT 60
 #define QUESTIONS_TO_WIN 3
-SDL_Surface* thinkImage;
-SDL_Surface* clickImage;
-SDL_Surface* happyImage;
-SDL_Surface* angryImage;
-int currentImageState;
+#define PUZZLE_ANSWER_SPACING 50
 
-typedef enum {
-    MENU_STATE,
-    GAME_STATE,
-    GAMEOVER_STATE,
-    WIN_STATE
-} GameState;
-
+// Structure definitions
 typedef struct {
     int x, y;
 } Point;
@@ -56,43 +46,97 @@ typedef struct {
     int questionsSurvived;
 } PlayerStats;
 
-extern Mix_Chunk *beepSound;
-extern Mix_Chunk *hoverSound;
-extern Mix_Chunk *sourisSound;
-extern Mix_Music *enigmeMusic;
-extern Mix_Music *winMusic;
-extern Uint32 lastBeepTime;
-extern Uint32 beepInterval;
-extern int beepChannel;
-extern int shouldBeep;
-extern PlayerStats player;
-extern GameState currentState;
-extern int lastHoveredButton;
+// Game states
+typedef enum {
+    MENU_STATE,
+    GAME_STATE,
+    GAMEOVER_STATE,
+    WIN_STATE,
+    PUZZLE_STATE,
+    HELP_STATE,
+    PUZZLE_HELP_STATE
+} GameState;
 
-Mix_Music *gameOverMusic = NULL;
+// Help screen states
+typedef enum {
+    HELP_OFF,
+    HELP_SCREEN1,
+    HELP_SCREEN2,
+    HELP_SCREEN3,
+    HELP_SCREEN4,
+    HELP_SCREEN5,
+    HELP_SCREEN6
+} HelpState;
 
+// Main game data structure
+typedef struct {
+    SDL_Surface *screen;
+    TTF_Font *font;
+    TTF_Font *fontLarge;
+    
+    Mix_Chunk *beepSound;
+    Mix_Chunk *hoverSound;
+    Mix_Chunk *clickSound;
+    Mix_Music *bgMusic;
+    Mix_Music *winMusic;
+    Mix_Music *gameOverMusic;
+    
+    SDL_Surface *menuBg;
+    SDL_Surface *gameBg;
+    SDL_Surface *quizButton;
+    SDL_Surface *quizButtonHover;
+    SDL_Surface *puzzleButton;
+    SDL_Surface *puzzleButtonHover;
+    SDL_Surface *questionButton;
+    SDL_Surface *answerButtons[3];
+    SDL_Surface *answerButtonsHover[3];
+    SDL_Surface *nextButton;
+    SDL_Surface *emotionImgs[4][3];
+    
+    // Puzzle game surfaces
+    SDL_Surface *puzzleBg;
+    SDL_Surface *answers[3];
+    SDL_Surface *successImg;
+    SDL_Surface *failureImg;
+    
+    // Help system surfaces
+    SDL_Surface *help_btn;
+    SDL_Surface *next_btn;
+    SDL_Surface *prev_btn;
+    SDL_Surface *exit_btn;
+    SDL_Surface *help1_img;
+    SDL_Surface *help2_img;
+    SDL_Surface *help3_img;
+    SDL_Surface *help4_img;
+    SDL_Surface *help5_img;
+    SDL_Surface *help6_img;
+    SDL_Surface *overlay;
+    
+    QuizQuestion questions[MAX_QUESTIONS];
+    int questionCount;
+    PlayerStats player;
+    GameState currentState;
+    HelpState help_state;
+    
+    int lastHoveredButton;
+    int isHoverSoundPlaying;
+} GameData;
 
-Mix_Chunk *beepSound = NULL;
-Mix_Chunk *hoverSound = NULL;
-Mix_Chunk *sourisSound = NULL;
-Mix_Music *enigmeMusic = NULL;
-Mix_Music *winMusic = NULL;
-Uint32 lastBeepTime = 0;
-Uint32 beepInterval = BEEP_INTERVAL_START;
-int beepChannel = -1;
-int shouldBeep = 1;
-PlayerStats player = {0, 3, 1, 0, 0};
-GameState currentState = MENU_STATE;
-int lastHoveredButton = -1;
-
+// Helper functions
 int pointInRect(Point p, SDL_Rect r) {
     return (p.x >= r.x) && (p.x < r.x + r.w) && (p.y >= r.y) && (p.y < r.y + r.h);
 }
 
-SDL_Surface* loadImage(const char *path) {
-    SDL_Surface *img = IMG_Load(path);
-    if (!img) printf("Error loading %s: %s\n", path, IMG_GetError());
-    return img;
+SDL_Surface* loadImageWithAlpha(const char *path) {
+    SDL_Surface *loaded = IMG_Load(path);
+    if (!loaded) {
+        printf("Error loading %s: %s\n", path, IMG_GetError());
+        return NULL;
+    }
+    
+    SDL_Surface *optimized = SDL_DisplayFormatAlpha(loaded);
+    SDL_FreeSurface(loaded);
+    return optimized;
 }
 
 void renderCenteredText(SDL_Surface *screen, TTF_Font *font, const char *text, 
@@ -108,60 +152,6 @@ void renderCenteredText(SDL_Surface *screen, TTF_Font *font, const char *text,
         SDL_BlitSurface(textSurface, NULL, screen, &dstRect);
         SDL_FreeSurface(textSurface);
     }
-}
-
-void updateBeepSound(float progress) {
-    if (!shouldBeep || progress <= 0) {
-        if (beepChannel != -1) {
-            Mix_HaltChannel(beepChannel);
-            beepChannel = -1;
-        }
-        return;
-    }
-
-    Uint32 currentTime = SDL_GetTicks();
-    beepInterval = BEEP_INTERVAL_MIN + 
-                  (Uint32)((BEEP_INTERVAL_START - BEEP_INTERVAL_MIN) * progress);
-    
-    if (currentTime - lastBeepTime > beepInterval) {
-        if (beepSound) {
-            if (beepChannel != -1) {
-                Mix_HaltChannel(beepChannel);
-            }
-            beepChannel = Mix_PlayChannel(-1, beepSound, 0);
-        }
-        lastBeepTime = currentTime;
-    }
-}
-
-void drawTimer(SDL_Surface *screen, float progress) {
-    SDL_Rect bgRect = {(WINDOW_WIDTH-TIMER_WIDTH)/2, TIMER_Y, TIMER_WIDTH, TIMER_HEIGHT};
-    SDL_FillRect(screen, &bgRect, SDL_MapRGB(screen->format, 100, 100, 100));
-    
-    int width = (int)(TIMER_WIDTH * progress);
-    Uint8 r = progress > 0.5 ? (Uint8)(255 * (1-progress)*2) : 255;
-    Uint8 g = progress < 0.5 ? (Uint8)(255 * progress*2) : 255;
-    
-    SDL_Rect timerRect = {(WINDOW_WIDTH-TIMER_WIDTH)/2, TIMER_Y, width, TIMER_HEIGHT};
-    SDL_FillRect(screen, &timerRect, SDL_MapRGB(screen->format, r, g, 0));
-}
-
-void renderPlayerStats(SDL_Surface *screen, TTF_Font *font) {
-    char statsText[100];
-    SDL_Color white = {255, 255, 255, 0};
-    SDL_Color gold = {255, 215, 0, 0};
-
-    sprintf(statsText, "Score: %d", player.score);
-    renderCenteredText(screen, font, statsText, (SDL_Rect){WINDOW_WIDTH-200, 20, 180, 30}, gold);
-    
-    sprintf(statsText, "Lives: %d", player.lives);
-    renderCenteredText(screen, font, statsText, (SDL_Rect){WINDOW_WIDTH-200, 60, 180, 30}, white);
-    
-    sprintf(statsText, "Level: %d", player.level);
-    renderCenteredText(screen, font, statsText, (SDL_Rect){WINDOW_WIDTH-200, 100, 180, 30}, white);
-    
-    sprintf(statsText, "Survived: %d/%d", player.questionsSurvived, QUESTIONS_TO_WIN);
-    renderCenteredText(screen, font, statsText, (SDL_Rect){WINDOW_WIDTH-200, 140, 180, 30}, white);
 }
 
 int loadQuestions(const char *filename, QuizQuestion *questions) {
@@ -195,33 +185,231 @@ int loadQuestions(const char *filename, QuizQuestion *questions) {
     return count;
 }
 
-void showGameOver(SDL_Surface *screen, TTF_Font *font) {
-    SDL_Surface *gameOverBg = loadImage("over.png");
-    if (!gameOverBg) {
-        printf("Failed to load game over background\n");
+// Initialization function
+int initGame(GameData *game) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
+        printf("SDL_Init failed: %s\n", SDL_GetError()); 
+        return 0;
+    }
+    
+    game->screen = SDL_SetVideoMode(WINDOW_WIDTH, WINDOW_HEIGHT, 32, SDL_SWSURFACE);
+    if (!game->screen) {
+        printf("SDL_SetVideoMode failed: %s\n", SDL_GetError());
+        return 0;
+    }
+    
+    if (TTF_Init() == -1) {
+        printf("TTF_Init failed: %s\n", TTF_GetError());
+        return 0;
+    }
+    
+    if (IMG_Init(IMG_INIT_PNG) != IMG_INIT_PNG) {
+        printf("IMG_Init failed: %s\n", IMG_GetError());
+        return 0;
+    }
+    
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
+        printf("Mix_OpenAudio failed: %s\n", Mix_GetError());
+        return 0;
+    }
+    
+    Mix_AllocateChannels(16);
+    
+    // Load fonts
+    game->font = TTF_OpenFont("arial.ttf", 24);
+    game->fontLarge = TTF_OpenFont("zzz.ttf", 24);
+    if (!game->font || !game->fontLarge) {
+        printf("TTF_OpenFont failed: %s\n", TTF_GetError());
+        return 0;
+    }
+    
+    // Load sounds
+    game->beepSound = Mix_LoadWAV("beep.wav");
+    game->hoverSound = Mix_LoadWAV("hover.wav");
+    game->clickSound = Mix_LoadWAV("click.wav");
+    game->bgMusic = Mix_LoadMUS("enigme.wav");
+    game->winMusic = Mix_LoadMUS("win.wav");
+    game->gameOverMusic = Mix_LoadMUS("over.wav");
+    
+    // Load quiz game images
+    game->menuBg = loadImageWithAlpha("menu_bg.png");
+    game->gameBg = loadImageWithAlpha("game_bg.png");
+    game->quizButton = loadImageWithAlpha("quiz.png");
+    game->quizButtonHover = loadImageWithAlpha("quiz_hover.png");
+    game->puzzleButton = loadImageWithAlpha("puzzle.png");
+    game->puzzleButtonHover = loadImageWithAlpha("puzzle_hover.png");
+    game->questionButton = loadImageWithAlpha("question_btn.png");
+    
+    game->answerButtons[0] = loadImageWithAlpha("a.png");
+    game->answerButtons[1] = loadImageWithAlpha("b.png");
+    game->answerButtons[2] = loadImageWithAlpha("c.png");
+    game->answerButtonsHover[0] = loadImageWithAlpha("a_hover.png");
+    game->answerButtonsHover[1] = loadImageWithAlpha("b_hover.png");
+    game->answerButtonsHover[2] = loadImageWithAlpha("c_hover.png");
+    
+    game->nextButton = loadImageWithAlpha("next.png");
+    
+    // Load emotion animations
+    const char *emotionFiles[4][3] = {
+        {"think1.png", "think2.png", "think3.png"},
+        {"click1.png", "click2.png", "click3.png"},
+        {"happy1.png", "happy2.png", "happy3.png"},
+        {"angry1.png", "angry2.png", "angry3.png"}
+    };
+    
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 3; j++) {
+            game->emotionImgs[i][j] = loadImageWithAlpha(emotionFiles[i][j]);
+        }
+    }
+    
+    // Load puzzle game images
+    game->puzzleBg = loadImageWithAlpha("puzzle_3choices.png");
+    game->answers[0] = loadImageWithAlpha("answers1.png");
+    game->answers[1] = loadImageWithAlpha("answers2.png");
+    game->answers[2] = loadImageWithAlpha("answers3.png");
+    game->successImg = SDL_LoadBMP("succes.bmp");
+    game->failureImg = SDL_LoadBMP("echec.bmp");
+    
+    // Load help system images
+    game->help_btn = loadImageWithAlpha("help_btn.png");
+    game->next_btn = loadImageWithAlpha("next_btn.png");
+    game->prev_btn = loadImageWithAlpha("prev_btn.png");
+    game->exit_btn = loadImageWithAlpha("exit_btn.png");
+    game->help1_img = loadImageWithAlpha("help1.png");
+    game->help2_img = loadImageWithAlpha("help2.png");
+    game->help3_img = loadImageWithAlpha("help3.png");
+    game->help4_img = loadImageWithAlpha("help4.png");
+    game->help5_img = loadImageWithAlpha("help5.png");
+    game->help6_img = loadImageWithAlpha("help6.png");
+    
+    // Create overlay for help system
+    game->overlay = SDL_CreateRGBSurface(SDL_SWSURFACE, WINDOW_WIDTH, WINDOW_HEIGHT, 32, 
+                                       0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
+    SDL_FillRect(game->overlay, NULL, SDL_MapRGBA(game->overlay->format, 0, 0, 0, 180));
+    
+    // Load questions
+    game->questionCount = loadQuestions("questions.txt", game->questions);
+    if (game->questionCount == 0) {
+        return 0;
+    }
+    
+    // Initialize player stats
+    game->player.score = 0;
+    game->player.lives = 3;
+    game->player.level = 1;
+    game->player.consecutiveCorrect = 0;
+    game->player.questionsSurvived = 0;
+    
+    game->currentState = MENU_STATE;
+    game->help_state = HELP_OFF;
+    game->lastHoveredButton = -1;
+    game->isHoverSoundPlaying = 0;
+    
+    SDL_WM_SetCaption("Quiz Game with Help System", NULL);
+    return 1;
+}
+
+// Cleanup function
+void cleanupGame(GameData *game) {
+    // Free surfaces
+    SDL_FreeSurface(game->menuBg);
+    SDL_FreeSurface(game->gameBg);
+    SDL_FreeSurface(game->quizButton);
+    SDL_FreeSurface(game->quizButtonHover);
+    SDL_FreeSurface(game->puzzleButton);
+    SDL_FreeSurface(game->puzzleButtonHover);
+    SDL_FreeSurface(game->questionButton);
+    
+    for (int i = 0; i < 3; i++) {
+        SDL_FreeSurface(game->answerButtons[i]);
+        SDL_FreeSurface(game->answerButtonsHover[i]);
+    }
+    
+    SDL_FreeSurface(game->nextButton);
+    
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 3; j++) {
+            SDL_FreeSurface(game->emotionImgs[i][j]);
+        }
+    }
+    
+    // Free puzzle resources
+    SDL_FreeSurface(game->puzzleBg);
+    for (int i = 0; i < 3; i++) {
+        SDL_FreeSurface(game->answers[i]);
+    }
+    SDL_FreeSurface(game->successImg);
+    SDL_FreeSurface(game->failureImg);
+    
+    // Free help system resources
+    SDL_FreeSurface(game->help_btn);
+    SDL_FreeSurface(game->next_btn);
+    SDL_FreeSurface(game->prev_btn);
+    SDL_FreeSurface(game->exit_btn);
+    SDL_FreeSurface(game->help1_img);
+    SDL_FreeSurface(game->help2_img);
+    SDL_FreeSurface(game->help3_img);
+    SDL_FreeSurface(game->help4_img);
+    SDL_FreeSurface(game->help5_img);
+    SDL_FreeSurface(game->help6_img);
+    SDL_FreeSurface(game->overlay);
+    
+    // Free audio
+    Mix_FreeChunk(game->beepSound);
+    Mix_FreeChunk(game->hoverSound);
+    Mix_FreeChunk(game->clickSound);
+    Mix_FreeMusic(game->bgMusic);
+    Mix_FreeMusic(game->winMusic);
+    Mix_FreeMusic(game->gameOverMusic);
+    
+    // Free fonts
+    TTF_CloseFont(game->font);
+    TTF_CloseFont(game->fontLarge);
+    
+    // Quit subsystems
+    Mix_CloseAudio();
+    IMG_Quit();
+    TTF_Quit();
+    SDL_Quit();
+}
+
+// Game screens
+void drawTimer(GameData *game, float progress) {
+    SDL_Rect bgRect = {(WINDOW_WIDTH-TIMER_WIDTH)/2, 80, TIMER_WIDTH, TIMER_HEIGHT};
+    SDL_FillRect(game->screen, &bgRect, SDL_MapRGB(game->screen->format, 100, 100, 100));
+    
+    int width = (int)(TIMER_WIDTH * progress);
+    Uint8 r = progress > 0.5 ? (Uint8)(255 * (1-progress)*2) : 255;
+    Uint8 g = progress < 0.5 ? (Uint8)(255 * progress*2) : 255;
+    
+    SDL_Rect timerRect = {(WINDOW_WIDTH-TIMER_WIDTH)/2, 80, width, TIMER_HEIGHT};
+    SDL_FillRect(game->screen, &timerRect, SDL_MapRGB(game->screen->format, r, g, 0));
+}
+
+void showGameOver(GameData *game) {
+    SDL_Surface *loseBg = loadImageWithAlpha("lose.png");
+    if (!loseBg) {
+        printf("Failed to load lose background\n");
         return;
     }
 
-    // Stop current music and play game over music
- //   if (enigmeMusic) Mix_HaltMusic();
- //   if (gameOverMusic) Mix_PlayMusic(gameOverMusic, 0);
-
-    SDL_BlitSurface(gameOverBg, NULL, screen, NULL);
+    SDL_BlitSurface(loseBg, NULL, game->screen, NULL);
     
     char gameOverText[100];
-    sprintf(gameOverText, "Final Score: %d", player.score);
+    sprintf(gameOverText, "Final Score: %d", game->player.score);
     
-    SDL_Color red = {255, 0, 0, 0};
-    SDL_Color white = {255, 255, 255, 0};
+    SDL_Color red = {255, 0, 0, 255};
+    SDL_Color white = {255, 255, 255, 255};
     
-    renderCenteredText(screen, font, "Game Over!", 
+    renderCenteredText(game->screen, game->fontLarge, "Game Over!", 
                      (SDL_Rect){0, WINDOW_HEIGHT/2 - 100, WINDOW_WIDTH, 50}, red);
-    renderCenteredText(screen, font, gameOverText, 
+    renderCenteredText(game->screen, game->font, gameOverText, 
                      (SDL_Rect){0, WINDOW_HEIGHT/2 - 30, WINDOW_WIDTH, 50}, white);
-    renderCenteredText(screen, font, "Click to return to menu", 
+    renderCenteredText(game->screen, game->font, "Click to return to menu", 
                      (SDL_Rect){0, WINDOW_HEIGHT/2 + 40, WINDOW_WIDTH, 50}, white);
     
-    SDL_Flip(screen);
+    SDL_Flip(game->screen);
     
     SDL_Event event;
     int waiting = 1;
@@ -234,39 +422,32 @@ void showGameOver(SDL_Surface *screen, TTF_Font *font) {
         SDL_Delay(10);
     }
 
-    // Stop game over music and return to menu music
-  //  if (gameOverMusic) Mix_HaltMusic();
-  //  if (enigmeMusic) Mix_PlayMusic(enigmeMusic, -1);
-
-    SDL_FreeSurface(gameOverBg);
+    SDL_FreeSurface(loseBg);
 }
 
-void showWinScreen(SDL_Surface *screen, TTF_Font *font) {
-    SDL_Surface *winBg = loadImage("win.png");
+void showWinScreen(GameData *game) {
+    SDL_Surface *winBg = loadImageWithAlpha("win.png");
     if (!winBg) {
         printf("Failed to load win background\n");
         return;
     }
 
-  //  if (enigmeMusic) Mix_HaltMusic();
-   // if (winMusic) Mix_PlayMusic(winMusic, 0);
-
-    SDL_BlitSurface(winBg, NULL, screen, NULL);
+    SDL_BlitSurface(winBg, NULL, game->screen, NULL);
     
     char winText[100];
-    sprintf(winText, "Final Score: %d", player.score);
+    sprintf(winText, "Final Score: %d", game->player.score);
     
-    SDL_Color gold = {255, 215, 0, 0};
-    SDL_Color white = {255, 255, 255, 0};
+    SDL_Color gold = {255, 215, 0, 255};
+    SDL_Color white = {255, 255, 255, 255};
     
-    renderCenteredText(screen, font, "You Win!", 
+    renderCenteredText(game->screen, game->fontLarge, "You Win!", 
                      (SDL_Rect){0, WINDOW_HEIGHT/2 - 100, WINDOW_WIDTH, 50}, gold);
-    renderCenteredText(screen, font, winText, 
+    renderCenteredText(game->screen, game->font, winText, 
                      (SDL_Rect){0, WINDOW_HEIGHT/2 - 30, WINDOW_WIDTH, 50}, white);
-    renderCenteredText(screen, font, "Click to return to menu", 
+    renderCenteredText(game->screen, game->font, "Click to return to menu", 
                      (SDL_Rect){0, WINDOW_HEIGHT/2 + 40, WINDOW_WIDTH, 50}, white);
     
-    SDL_Flip(screen);
+    SDL_Flip(game->screen);
     
     SDL_Event event;
     int waiting = 1;
@@ -279,56 +460,342 @@ void showWinScreen(SDL_Surface *screen, TTF_Font *font) {
         SDL_Delay(10);
     }
 
-  //  if (winMusic) Mix_HaltMusic();
-  //  if (enigmeMusic) Mix_PlayMusic(enigmeMusic, -1);
-
     SDL_FreeSurface(winBg);
 }
 
-
-
-
-void runQuizGame(SDL_Surface *screen, TTF_Font *font, QuizQuestion *questions, int questionCount, TTF_Font *font1) {
-    // Define colors (only keeping used ones)
-    SDL_Color black = {0, 0, 0, 255};
-    SDL_Color green = {0, 255, 0, 255};
-    SDL_Color red = {255, 0, 0, 255};
-    SDL_Color gold = {255, 215, 0, 255};
-    SDL_Color progressGreen = {0, 200, 0, 255};
-    SDL_Color progressBgColor = {50, 50, 50, 255};
-
-    // Load game assets
-    SDL_Surface *bg = loadImage("2D.png");
-    SDL_Surface *questionButton = loadImage("button.png");
-    SDL_Surface *answerButtons[3] = {NULL};
-    SDL_Surface *answerButtonsHover[3] = {NULL};
-    SDL_Surface *nextButton = loadImage("next.png");
+// Game modes
+void runPuzzleGame(GameData *game) {
+    Mix_HaltChannel(-1);
     
-    // Load emotion animation frames
-    SDL_Surface *thinkImgs[3] = {loadImage("think1.png"), loadImage("think2.png"), loadImage("think3.png")};
-    SDL_Surface *clickImgs[3] = {loadImage("click1.png"), loadImage("click2.png"), loadImage("click3.png")};
-    SDL_Surface *happyImgs[3] = {loadImage("happy1.png"), loadImage("happy2.png"), loadImage("happy3.png")};
-    SDL_Surface *angryImgs[3] = {loadImage("angry1.png"), loadImage("angry2.png"), loadImage("angry3.png")};
-    
-    int currentEmotion = 0;
-    int currentFrame = 0;
-    Uint32 lastFrameTime = SDL_GetTicks();
-    Uint32 frameDelay = 200;
-    
-    // Load answer buttons
-    answerButtons[0] = loadImage("a.png");
-    answerButtons[1] = loadImage("b.png");
-    answerButtons[2] = loadImage("c.png");
-    answerButtonsHover[0] = loadImage("a1.png");
-    answerButtonsHover[1] = loadImage("b1.png");
-    answerButtonsHover[2] = loadImage("c1.png");
+    int puzzleRunning = 1;
+    int showResult = 0;
+    Uint32 resultStartTime = 0;
+    int result = 0;
+    Uint32 startTime = SDL_GetTicks();
 
-    // UI positions
-    SDL_Rect questionRect = {((WINDOW_WIDTH - BUTTON_WIDTH)/2)-60, 100, BUTTON_WIDTH, BUTTON_HEIGHT};
+    // Randomly choose between puzzle set 1 or 2
+    int puzzleSet = (rand() % 2) + 1; // Will be 1 or 2
+    
+    // Load the appropriate puzzle background and answers based on the chosen set
+    char bgPath[50], answer1Path[50], answer2Path[50], answer3Path[50];
+    
+    if (puzzleSet == 1) {
+        strcpy(bgPath, "puzzle_3choices.png");
+        strcpy(answer1Path, "answers1.png");
+        strcpy(answer2Path, "answers2.png");
+        strcpy(answer3Path, "answers3.png");
+    } else {
+        strcpy(bgPath, "puzzle_3choices1.png");
+        strcpy(answer1Path, "answers4.png");
+        strcpy(answer2Path, "answers5.png");
+        strcpy(answer3Path, "answers6.png");
+    }
+    
+    // Load the images for this puzzle set
+    SDL_Surface *puzzleBg = loadImageWithAlpha(bgPath);
+    SDL_Surface *answers[3];
+    answers[0] = loadImageWithAlpha(answer1Path);
+    answers[1] = loadImageWithAlpha(answer2Path);
+    answers[2] = loadImageWithAlpha(answer3Path);
+
+    // Calculate positions with proper spacing
+    int answerWidth = 200;
+    int answerHeight = 150;
+    int totalWidth = (3 * answerWidth) + (2 * PUZZLE_ANSWER_SPACING);
+    int startX = (WINDOW_WIDTH - totalWidth) / 2;
+    
+    SDL_Rect answerRects[3] = {
+        {startX-200, 500, answerWidth, answerHeight},
+        {startX + answerWidth + PUZZLE_ANSWER_SPACING-100, 500, answerWidth, answerHeight},
+        {startX + 2*(answerWidth + PUZZLE_ANSWER_SPACING), 500, answerWidth, answerHeight}
+    };
+
+    // Help button position (top right corner)
+    SDL_Rect helpButtonRect = {
+        WINDOW_WIDTH - game->help_btn->w - 20, 
+        20, 
+        game->help_btn->w, 
+        game->help_btn->h
+    };
+
+    while (puzzleRunning) {
+        float timeLeft = TIMER_DURATION - (SDL_GetTicks() - startTime)/1000.0f;
+        float progress = timeLeft/TIMER_DURATION;
+        
+        if (timeLeft <= 0 && !showResult) {
+            result = 0;
+            showResult = 1;
+            resultStartTime = SDL_GetTicks();
+        }
+        
+        Point mouse;
+        SDL_GetMouseState(&mouse.x, &mouse.y);
+
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) {
+                puzzleRunning = 0;
+                game->currentState = MENU_STATE;
+            }
+            else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
+                puzzleRunning = 0;
+                game->currentState = MENU_STATE;
+            }
+            else if (event.type == SDL_MOUSEBUTTONDOWN) {
+                if (pointInRect(mouse, helpButtonRect)) {
+                    game->currentState = PUZZLE_HELP_STATE;
+                    if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                    puzzleRunning = 0;
+                    break;
+                }
+                
+                if (!showResult) {
+                    if (pointInRect(mouse, answerRects[2])) {
+                        result = 1;
+                        showResult = 1;
+                        resultStartTime = SDL_GetTicks();
+                        game->player.score += 200;
+                        if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                    }
+                    else if (pointInRect(mouse, answerRects[0]) || pointInRect(mouse, answerRects[1])) {
+                        result = 0;
+                        showResult = 1;
+                        resultStartTime = SDL_GetTicks();
+                        if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                    }
+                }
+            }
+        }
+
+        if (game->currentState == PUZZLE_STATE) {
+            // Draw background
+            SDL_BlitSurface(puzzleBg, NULL, game->screen, NULL);
+            
+            // Draw timer
+            if (!showResult) {
+                drawTimer(game, progress);
+            }
+
+            // Draw answer choices
+            for (int i = 0; i < 3; i++) {
+                if (pointInRect(mouse, answerRects[i]) && !showResult) {
+                    SDL_Rect highlight = answerRects[i];
+                    highlight.x -= 5;
+                    highlight.y -= 5;
+                    highlight.w += 10;
+                    highlight.h += 10;
+                    SDL_FillRect(game->screen, &highlight, SDL_MapRGB(game->screen->format, 255, 255, 0));
+                }
+                
+                SDL_BlitSurface(answers[i], NULL, game->screen, &answerRects[i]);
+            }
+
+            // Draw help button
+            SDL_BlitSurface(game->help_btn, NULL, game->screen, &helpButtonRect);
+
+            // Show result
+            if (showResult) {
+                SDL_Surface* resultImg = result ? game->successImg : game->failureImg;
+                SDL_Rect resultRect = {
+                    WINDOW_WIDTH/2 - resultImg->w/2,
+                    WINDOW_HEIGHT/2 - resultImg->h/2,
+                    resultImg->w,
+                    resultImg->h
+                };
+                SDL_BlitSurface(resultImg, NULL, game->screen, &resultRect);
+
+                if (SDL_GetTicks() - resultStartTime > 2000) {
+                    puzzleRunning = 0;
+                }
+            }
+
+            SDL_Flip(game->screen);
+        }
+        SDL_Delay(10);
+    }
+
+    // Free the loaded images for this puzzle set
+    SDL_FreeSurface(puzzleBg);
+    for (int i = 0; i < 3; i++) {
+        SDL_FreeSurface(answers[i]);
+    }
+
+    if (game->currentState == PUZZLE_STATE) {
+        game->currentState = MENU_STATE;
+    }
+    if (game->bgMusic) Mix_PlayMusic(game->bgMusic, -1);
+}
+void runPuzzleHelpSystem(GameData *game) {
+    // Calculate help screen position (centered)
+    SDL_Rect helpScreenRect = {
+        (WINDOW_WIDTH - HELP_WIDTH)/2,
+        (WINDOW_HEIGHT - HELP_HEIGHT)/2,
+        HELP_WIDTH,
+        HELP_HEIGHT
+    };
+
+    // Button positions (relative to help screen)
+    SDL_Rect nextButtonRect = {HELP_WIDTH-110, HELP_HEIGHT-60, 100, 50};
+    SDL_Rect prevButtonRect = {10, HELP_HEIGHT-60, 100, 50};
+    SDL_Rect exitButtonRect = {HELP_WIDTH/2-50, HELP_HEIGHT-60, 100, 50};
+
+    while (game->currentState == PUZZLE_HELP_STATE) {
+        Point mouse;
+        SDL_GetMouseState(&mouse.x, &mouse.y);
+        
+        // Adjust mouse coordinates relative to help screen
+        int helpX = mouse.x - helpScreenRect.x;
+        int helpY = mouse.y - helpScreenRect.y;
+
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) {
+                game->currentState = GAMEOVER_STATE;
+                return;
+            }
+            else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
+                game->currentState = PUZZLE_STATE;
+                return;
+            }
+            else if (event.type == SDL_MOUSEBUTTONDOWN) {
+                // Check navigation buttons
+                switch(game->help_state) {
+                    case HELP_SCREEN4:
+                        if (pointInRect((Point){helpX, helpY}, nextButtonRect)) {
+                            game->help_state = HELP_SCREEN5;
+                            if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                        }
+                        break;
+                        
+                    case HELP_SCREEN5:
+                        if (pointInRect((Point){helpX, helpY}, prevButtonRect)) {
+                            game->help_state = HELP_SCREEN4;
+                            if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                        }
+                        else if (pointInRect((Point){helpX, helpY}, nextButtonRect)) {
+                            game->help_state = HELP_SCREEN6;
+                            if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                        }
+                        break;
+                        
+                    case HELP_SCREEN6:
+                        if (pointInRect((Point){helpX, helpY}, prevButtonRect)) {
+                            game->help_state = HELP_SCREEN5;
+                            if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                        }
+                        else if (pointInRect((Point){helpX, helpY}, exitButtonRect)) {
+                            game->currentState = PUZZLE_STATE;
+                            if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                            return;
+                        }
+                        break;
+                        
+                    default:
+                        break;
+                }
+            }
+        }
+
+        // Rendering
+        SDL_FillRect(game->screen, NULL, SDL_MapRGB(game->screen->format, 0, 0, 0));
+        SDL_BlitSurface(game->puzzleBg, NULL, game->screen, NULL);
+        
+        // Draw overlay
+        SDL_BlitSurface(game->overlay, NULL, game->screen, NULL);
+        
+        // Draw help screen background
+        SDL_FillRect(game->screen, &helpScreenRect, SDL_MapRGB(game->screen->format, 255, 255, 255));
+        
+        // Draw current help screen
+        SDL_Surface *currentHelp = NULL;
+        switch(game->help_state) {
+            case HELP_SCREEN4: currentHelp = game->help4_img; break;
+            case HELP_SCREEN5: currentHelp = game->help5_img; break;
+            case HELP_SCREEN6: currentHelp = game->help6_img; break;
+            default: break;
+        }
+        
+        if (currentHelp) {
+            SDL_BlitSurface(currentHelp, NULL, game->screen, &helpScreenRect);
+            
+            // Draw navigation buttons
+            switch(game->help_state) {
+                case HELP_SCREEN4:
+                    SDL_BlitSurface(game->next_btn, NULL, game->screen, 
+                                  &(SDL_Rect){
+                                      helpScreenRect.x + nextButtonRect.x,
+                                      helpScreenRect.y + nextButtonRect.y,
+                                      nextButtonRect.w,
+                                      nextButtonRect.h
+                                  });
+                    break;
+                    
+                case HELP_SCREEN5:
+                    SDL_BlitSurface(game->prev_btn, NULL, game->screen, 
+                                  &(SDL_Rect){
+                                      helpScreenRect.x + prevButtonRect.x,
+                                      helpScreenRect.y + prevButtonRect.y,
+                                      prevButtonRect.w,
+                                      prevButtonRect.h
+                                  });
+                    SDL_BlitSurface(game->next_btn, NULL, game->screen, 
+                                  &(SDL_Rect){
+                                      helpScreenRect.x + nextButtonRect.x,
+                                      helpScreenRect.y + nextButtonRect.y,
+                                      nextButtonRect.w,
+                                      nextButtonRect.h
+                                  });
+                    break;
+                    
+                case HELP_SCREEN6:
+                    SDL_BlitSurface(game->prev_btn, NULL, game->screen, 
+                                  &(SDL_Rect){
+                                      helpScreenRect.x + prevButtonRect.x,
+                                      helpScreenRect.y + prevButtonRect.y,
+                                      prevButtonRect.w,
+                                      prevButtonRect.h
+                                  });
+                    SDL_BlitSurface(game->exit_btn, NULL, game->screen, 
+                                  &(SDL_Rect){
+                                      helpScreenRect.x + exitButtonRect.x,
+                                      helpScreenRect.y + exitButtonRect.y,
+                                      exitButtonRect.w,
+                                      exitButtonRect.h
+                                  });
+                    break;
+                    
+                default:
+                    break;
+            }
+        }
+
+        SDL_Flip(game->screen);
+        SDL_Delay(10);
+    }
+}
+void runQuizGame(GameData *game) {
+    Mix_HaltChannel(-1);
+
+    // Color definitions
+    const SDL_Color black = {0, 0, 0, 255};
+    const SDL_Color green = {0, 255, 0, 255};
+    const SDL_Color red = {255, 0, 0, 255};
+    const SDL_Color gold = {255, 215, 0, 255};
+    const SDL_Color progressGreen = {0, 200, 0, 255};
+    const SDL_Color progressBgColor = {50, 50, 50, 255};
+
+    // Calculate button positions
+    SDL_Rect questionRect = {
+        (WINDOW_WIDTH - BUTTON_WIDTH)/2 - 60, 
+        100, 
+        BUTTON_WIDTH, 
+        BUTTON_HEIGHT
+    };
+    
     SDL_Rect answerRects[3];
-    int answerSpacing = 20;
-    int totalWidth = 3*BUTTON_WIDTH + 2*answerSpacing;
-    int startX = (WINDOW_WIDTH - totalWidth)/2;
+    const int answerSpacing = 20;
+    const int totalWidth = 3*BUTTON_WIDTH + 2*answerSpacing;
+    const int startX = (WINDOW_WIDTH - totalWidth)/2;
     
     for (int i = 0; i < 3; i++) {
         answerRects[i] = (SDL_Rect){
@@ -346,16 +813,29 @@ void runQuizGame(SDL_Surface *screen, TTF_Font *font, QuizQuestion *questions, i
         NEXT_BUTTON_HEIGHT
     };
 
-    // Game state
+    // Help button position (top right corner)
+    SDL_Rect helpButtonRect = {
+        WINDOW_WIDTH - game->help_btn->w - 20, 
+        20, 
+        game->help_btn->w, 
+        game->help_btn->h
+    };
+
+    // Initialize game state
     srand(time(NULL));
-    int currentQuestion = rand() % questionCount;
+    int currentQuestion = rand() % game->questionCount;
     int selectedAnswer = -1;
     int showingAnswer = 0;
     int running = 1;
     int showNextButton = 0;
     Uint32 startTime = SDL_GetTicks();
     int lastHoveredAnswer = -1;
+    int currentEmotion = 0;
+    int currentFrame = 0;
+    Uint32 lastFrameTime = SDL_GetTicks();
+    const Uint32 frameDelay = 200;
 
+    // Main game loop
     while (running) {
         // Handle frame animation
         if (SDL_GetTicks() - lastFrameTime > frameDelay) {
@@ -363,29 +843,30 @@ void runQuizGame(SDL_Surface *screen, TTF_Font *font, QuizQuestion *questions, i
             lastFrameTime = SDL_GetTicks();
         }
 
-        // Timer logic
+        // Calculate remaining time
         float timeLeft = TIMER_DURATION - (SDL_GetTicks() - startTime)/1000.0f;
         float progress = timeLeft/TIMER_DURATION;
         
+        // Time's up handling
         if (timeLeft <= 0 && !showingAnswer) {
             showingAnswer = 1;
             selectedAnswer = -1;
-            shouldBeep = 0;
-            player.lives--;
+            game->player.lives--;
             currentEmotion = 3;
             showNextButton = 1;
             
-            if (player.lives <= 0) {
-                currentState = GAMEOVER_STATE;
-                running = 0;
+            if (game->player.lives <= 0) {
+                game->currentState = GAMEOVER_STATE;
+                break;
             }
         }
         
-        // Mouse hover detection
+        // Mouse input handling
         Point mouse;
         SDL_GetMouseState(&mouse.x, &mouse.y);
         int hoveredAnswer = -1;
         
+        // Handle answer hover effects
         if (!showingAnswer) {
             currentEmotion = 0;
             for (int i = 0; i < 3; i++) {
@@ -393,9 +874,8 @@ void runQuizGame(SDL_Surface *screen, TTF_Font *font, QuizQuestion *questions, i
                     currentEmotion = 1;
                     hoveredAnswer = i;
                     
-                    // Play sound only when entering a new button
-                    if (hoveredAnswer != lastHoveredAnswer && sourisSound) {
-                        Mix_PlayChannel(-1, sourisSound, 0);
+                    if (hoveredAnswer != lastHoveredAnswer && game->hoverSound) {
+                        Mix_PlayChannel(-1, game->hoverSound, 0);
                     }
                     break;
                 }
@@ -403,140 +883,157 @@ void runQuizGame(SDL_Surface *screen, TTF_Font *font, QuizQuestion *questions, i
             lastHoveredAnswer = hoveredAnswer;
         }
         
-        // Event handling
+        // Event processing
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
+                game->currentState = GAMEOVER_STATE;
                 running = 0;
-                currentState = MENU_STATE;
+                break;
             }
             else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
+                game->currentState = MENU_STATE;
                 running = 0;
-                currentState = MENU_STATE;
+                break;
             }
             else if (event.type == SDL_MOUSEBUTTONDOWN) {
                 Point mouse = {event.button.x, event.button.y};
                 
+                // Check if help button was clicked
+                if (pointInRect(mouse, helpButtonRect)) {
+                    game->currentState = HELP_STATE;
+                    running = 0;
+                    break;
+                }
+                
+                // Answer selection
                 if (!showingAnswer) {
                     for (int i = 0; i < 3; i++) {
                         if (pointInRect(mouse, answerRects[i])) {
                             selectedAnswer = i;
                             showingAnswer = 1;
-                            shouldBeep = 0;
                             showNextButton = 1;
                             
-                            if (selectedAnswer == questions[currentQuestion].correctAnswer) {
+                            if (game->clickSound) {
+                                Mix_PlayChannel(-1, game->clickSound, 0);
+                            }
+                            
+                            // Check if answer is correct
+                            if (selectedAnswer == game->questions[currentQuestion].correctAnswer) {
                                 currentEmotion = 2;
-                                player.score += 100 * player.level;
-                                player.questionsSurvived++;
-                                if (player.questionsSurvived >= QUESTIONS_TO_WIN) {
-                                    currentState = WIN_STATE;
+                                game->player.score += 100 * game->player.level;
+                                game->player.questionsSurvived++;
+                                
+                                if (game->player.questionsSurvived >= QUESTIONS_TO_WIN) {
+                                    game->currentState = WIN_STATE;
                                     running = 0;
+                                    break;
                                 }
                             } else {
                                 currentEmotion = 3;
-                                player.lives--;
-                                if (player.lives <= 0) {
-                                    currentState = GAMEOVER_STATE;
+                                game->player.lives--;
+                                
+                                if (game->player.lives <= 0) {
+                                    game->currentState = GAMEOVER_STATE;
                                     running = 0;
+                                    break;
                                 }
                             }
                             break;
                         }
                     }
                 }
+                // Next question
                 else if (showNextButton && pointInRect(mouse, nextButtonRect)) {
                     currentEmotion = 0;
-                    currentQuestion = rand() % questionCount;
+                    currentQuestion = rand() % game->questionCount;
                     selectedAnswer = -1;
                     showingAnswer = 0;
                     showNextButton = 0;
                     startTime = SDL_GetTicks();
-                    shouldBeep = 1;
                 }
             }
         }
 
-        // Update beep sound
-        updateBeepSound(progress);
-
-        // Render everything
-        SDL_FillRect(screen, NULL, SDL_MapRGB(screen->format, 0, 0, 0));
-        SDL_BlitSurface(bg, NULL, screen, NULL);
+        // Rendering
+        SDL_FillRect(game->screen, NULL, SDL_MapRGB(game->screen->format, 0, 0, 0));
+        SDL_BlitSurface(game->gameBg, NULL, game->screen, NULL);
         
+        // Draw timer if not showing answer
         if (!showingAnswer) {
-            drawTimer(screen, progress);
+            drawTimer(game, progress);
         }
         
-        // Display animated emotion image
-        SDL_Rect emotionRect = {20, 20, 100, 100};
-        SDL_Surface *currentEmotionImg = NULL;
-        
-        switch(currentEmotion) {
-            case 0: currentEmotionImg = thinkImgs[currentFrame]; break;
-            case 1: currentEmotionImg = clickImgs[currentFrame]; break;
-            case 2: currentEmotionImg = happyImgs[currentFrame]; break;
-            case 3: currentEmotionImg = angryImgs[currentFrame]; break;
-        }
-        
-        if (currentEmotionImg) {
-            SDL_BlitSurface(currentEmotionImg, NULL, screen, &emotionRect);
+        // Draw emotion animation
+        SDL_Rect emotionRect = {0, 0, 100, 100};
+        if (game->emotionImgs[currentEmotion][currentFrame]) {
+            SDL_BlitSurface(game->emotionImgs[currentEmotion][currentFrame], NULL, game->screen, &emotionRect);
         }
 
-        // Draw question and answers
-        SDL_BlitSurface(questionButton, NULL, screen, &questionRect);
-        renderCenteredText(screen, font, questions[currentQuestion].question, questionRect, black);
+        // Draw question
+        SDL_BlitSurface(game->questionButton, NULL, game->screen, &questionRect);
+        renderCenteredText(game->screen, game->font, game->questions[currentQuestion].question, questionRect, black);
         
+        // Draw answers
         for (int i = 0; i < 3; i++) {
-            if (hoveredAnswer == i && !showingAnswer && answerButtonsHover[i]) {
-                SDL_BlitSurface(answerButtonsHover[i], NULL, screen, &answerRects[i]);
-            } else {
-                SDL_BlitSurface(answerButtons[i], NULL, screen, &answerRects[i]);
+            // Choose button image (normal or hover)
+            SDL_Surface *button = (hoveredAnswer == i && !showingAnswer && game->answerButtonsHover[i]) ? 
+                                 game->answerButtonsHover[i] : game->answerButtons[i];
+            
+            if (button) {
+                SDL_BlitSurface(button, NULL, game->screen, &answerRects[i]);
             }
             
+            // Set answer text color
             SDL_Color textColor = black;
             if (showingAnswer) {
-                if (i == questions[currentQuestion].correctAnswer) {
-                    textColor = green;
+                if (i == game->questions[currentQuestion].correctAnswer) {
+                    textColor = green;  // Correct answer
                 } else if (i == selectedAnswer) {
-                    textColor = red;
+                    textColor = red;    // Wrong answer
                 }
             }
-            renderCenteredText(screen, font, questions[currentQuestion].answers[i], answerRects[i], textColor);
+            renderCenteredText(game->screen, game->font, game->questions[currentQuestion].answers[i], answerRects[i], textColor);
         }
 
-        if (showNextButton && nextButton) {
-            SDL_BlitSurface(nextButton, NULL, screen, &nextButtonRect);
-            renderCenteredText(screen, font, "Next", nextButtonRect, gold);
+        // Draw next button if needed
+        if (showNextButton && game->nextButton) {
+            SDL_BlitSurface(game->nextButton, NULL, game->screen, &nextButtonRect);
+            renderCenteredText(game->screen, game->font, "Next", nextButtonRect, gold);
         }
 
-        // Render player stats
+        // Draw help button (top right corner)
+        SDL_BlitSurface(game->help_btn, NULL, game->screen, &helpButtonRect);
+
+        // Draw player stats
         char statsText[128];
-        SDL_Rect statsRect = {20, 140, 300, 100};
-        sprintf(statsText, "Lives: %d\nLevel: %d\nScore: %d", player.lives, player.level, player.score);
-        SDL_Surface *statsSurface = TTF_RenderText_Blended(font1, statsText, gold);
+        SDL_Rect statsRect = {20, 180, 300, 100};
+        sprintf(statsText, "Lives: %d\nLevel: %d\nScore: %d", 
+                game->player.lives, game->player.level, game->player.score);
+        SDL_Surface *statsSurface = TTF_RenderText_Blended(game->font, statsText, gold);
         if (statsSurface) {
-            SDL_BlitSurface(statsSurface, NULL, screen, &statsRect);
+            SDL_BlitSurface(statsSurface, NULL, game->screen, &statsRect);
             SDL_FreeSurface(statsSurface);
         }
 
-        /* PROGRESS BAR */
-        // Background
+        // Draw progress bar background
         SDL_Rect progressBg = {10, WINDOW_HEIGHT - 40, WINDOW_WIDTH - 20, 20};
-        SDL_FillRect(screen, &progressBg, SDL_MapRGB(screen->format, progressBgColor.r, progressBgColor.g, progressBgColor.b));
+        SDL_FillRect(game->screen, &progressBg, SDL_MapRGB(game->screen->format, 
+                     progressBgColor.r, progressBgColor.g, progressBgColor.b));
         
-        // Foreground (progress)
-        int progressWidth = (int)((WINDOW_WIDTH - 20) * ((float)player.questionsSurvived / QUESTIONS_TO_WIN));
+        // Calculate and draw progress bar
+        int progressWidth = (int)((WINDOW_WIDTH - 20) * ((float)game->player.questionsSurvived / QUESTIONS_TO_WIN));
         progressWidth = progressWidth < 0 ? 0 : progressWidth;
         progressWidth = progressWidth > WINDOW_WIDTH - 20 ? WINDOW_WIDTH - 20 : progressWidth;
         
         SDL_Rect progressBar = {10, WINDOW_HEIGHT - 40, progressWidth, 20};
-        SDL_FillRect(screen, &progressBar, SDL_MapRGB(screen->format, progressGreen.r, progressGreen.g, progressGreen.b));
+        SDL_FillRect(game->screen, &progressBar, SDL_MapRGB(game->screen->format, 
+                     progressGreen.r, progressGreen.g, progressGreen.b));
         
-        // Progress text
+        // Draw progress text
         char progressText[50];
-        sprintf(progressText, "%d/%d", player.questionsSurvived, QUESTIONS_TO_WIN);
-        SDL_Surface* progressTextSurface = TTF_RenderText_Blended(font1, progressText, gold);
+        sprintf(progressText, "%d/%d", game->player.questionsSurvived, QUESTIONS_TO_WIN);
+        SDL_Surface* progressTextSurface = TTF_RenderText_Blended(game->font, progressText, gold);
         if (progressTextSurface) {
             SDL_Rect textRect = {
                 (WINDOW_WIDTH - progressTextSurface->w)/2,
@@ -544,171 +1041,210 @@ void runQuizGame(SDL_Surface *screen, TTF_Font *font, QuizQuestion *questions, i
                 progressTextSurface->w,
                 progressTextSurface->h
             };
-            SDL_BlitSurface(progressTextSurface, NULL, screen, &textRect);
+            SDL_BlitSurface(progressTextSurface, NULL, game->screen, &textRect);
             SDL_FreeSurface(progressTextSurface);
         }
 
-        SDL_Flip(screen);
+        // Update screen
+        SDL_Flip(game->screen);
         SDL_Delay(10);
     }
-
-    // Clean up resources
-    SDL_FreeSurface(bg);
-    SDL_FreeSurface(questionButton);
-    for (int i = 0; i < 3; i++) {
-        SDL_FreeSurface(answerButtons[i]);
-        SDL_FreeSurface(answerButtonsHover[i]);
-        SDL_FreeSurface(thinkImgs[i]);
-        SDL_FreeSurface(clickImgs[i]);
-        SDL_FreeSurface(happyImgs[i]);
-        SDL_FreeSurface(angryImgs[i]);
-    }
-    SDL_FreeSurface(nextButton);
 }
-int main() {
-    SDL_Surface *screen = NULL;
-    TTF_Font *font = NULL;
-    TTF_Font *font1 = NULL;
-    
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
-        printf("SDL_Init failed: %s\n", SDL_GetError());
-        return 1;
-    }
-    
-    screen = SDL_SetVideoMode(WINDOW_WIDTH, WINDOW_HEIGHT, 32, SDL_SWSURFACE);
-    if (!screen) {
-        printf("SDL_SetVideoMode failed: %s\n", SDL_GetError());
-        return 1;
-    }
-    
-    if (TTF_Init() == -1) {
-        printf("TTF_Init failed: %s\n", TTF_GetError());
-        return 1;
-    }
-    
-    if (IMG_Init(IMG_INIT_PNG) != IMG_INIT_PNG) {
-        printf("IMG_Init failed: %s\n", IMG_GetError());
-        return 1;
-    }
-    
-    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
-        printf("Mix_OpenAudio failed: %s\n", Mix_GetError());
-        return 1;
-    }
-    
-    Mix_AllocateChannels(16);
-    beepSound = Mix_LoadWAV("beep.wav");
-    hoverSound = Mix_LoadWAV("hover.wav");
-    sourisSound = Mix_LoadWAV("souris.wav");
-    enigmeMusic = Mix_LoadMUS("enigme.wav");
-    winMusic = Mix_LoadMUS("win.wav");
-    gameOverMusic = Mix_LoadMUS("over.wav");
-    
-    if (!beepSound || !hoverSound || !sourisSound) {
-        printf("Warning: Could not load sound effects\n");
-    }
-    if (!enigmeMusic) {
-        printf("Warning: Could not load enigme music\n");
-    }
-    if (!winMusic) {
-        printf("Warning: Could not load win music\n");
-    }
-    if (!gameOverMusic) {
-        printf("Warning: Could not load game over music\n");
-    }
-    
-    font = TTF_OpenFont("arial.ttf", 24);
-    if (!font) {
-        printf("TTF_OpenFont failed: %s\n", TTF_GetError());
-        return 1;
-    }
-    
-    font1 = TTF_OpenFont("zzz.ttf", 24);
-    if (!font1) {
-        printf("TTF_OpenFont1 failed: %s\n", TTF_GetError());
-        return 1;
-    }
 
-    QuizQuestion questions[MAX_QUESTIONS];
-    int questionCount = loadQuestions("fichier.txt", questions);
-    if (questionCount == 0) {
-        return 1;
-    }
-
-    SDL_Surface *menuBg = loadImage("2D.png");
-    SDL_Surface *quizButton = loadImage("quiz.png");
-    SDL_Surface *quizButtonHover = loadImage("quiz2.png");
-    SDL_Surface *puzzleButton = loadImage("puzzle.png");
-    SDL_Surface *puzzleButtonHover = loadImage("puzzle2.png");
-    SDL_Surface *otherButton = loadImage("other.png");       // Add your other program button
-    SDL_Surface *otherButtonHover = loadImage("other2.png"); // Add hover version
-    
-    if (!menuBg || !quizButton || !quizButtonHover || !puzzleButton || !puzzleButtonHover) {
-        printf("Failed to load menu assets\n");
-        return 1;
-    }
-
-    // Button positions - arranged in a row with spacing
-    int buttonSpacing = 20;
-    int totalButtonsWidth = quizButton->w + puzzleButton->w + otherButton->w + 2*buttonSpacing;
-    int startX = (screen->w - totalButtonsWidth) / 2;
-    
-    SDL_Rect quizButtonRect = {
-        startX,
-        (screen->h / 2) - 100,
-        quizButton->w,
-        quizButton->h
-    };
-    
-    SDL_Rect puzzleButtonRect = {
-        quizButtonRect.x + quizButton->w + buttonSpacing,
-        quizButtonRect.y,
-        puzzleButton->w,
-        puzzleButton->h
+void runHelpSystem(GameData *game) {
+    // Calculate help screen position (centered)
+    SDL_Rect helpScreenRect = {
+        (WINDOW_WIDTH - HELP_WIDTH)/2,
+        (WINDOW_HEIGHT - HELP_HEIGHT)/2,
+        HELP_WIDTH,
+        HELP_HEIGHT
     };
 
-    SDL_Rect otherButtonRect = {
-        puzzleButtonRect.x + puzzleButton->w + buttonSpacing,
-        quizButtonRect.y,
-        otherButton->w,
-        otherButton->h
-    };
+    // Button positions (relative to help screen)
+    SDL_Rect nextButtonRect = {HELP_WIDTH-110, HELP_HEIGHT-60, 100, 50};
+    SDL_Rect prevButtonRect = {10, HELP_HEIGHT-60, 100, 50};
+    SDL_Rect exitButtonRect = {HELP_WIDTH/2-50, HELP_HEIGHT-60, 100, 50};
 
-    if (enigmeMusic) {
-        Mix_PlayMusic(enigmeMusic, -1);
-    }
+    // Main help system loop
+    while (game->currentState == HELP_STATE) {
+        Point mouse;
+        SDL_GetMouseState(&mouse.x, &mouse.y);
+        
+        // Adjust mouse coordinates relative to help screen
+        int helpX = mouse.x - helpScreenRect.x;
+        int helpY = mouse.y - helpScreenRect.y;
 
-    int running = 1;
-    while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
-                running = 0;
+                game->currentState = GAMEOVER_STATE;
+                return;
+            }
+            else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
+                game->currentState = GAME_STATE;
+                return;
+            }
+            else if (event.type == SDL_MOUSEBUTTONDOWN) {
+                // Check navigation buttons
+                switch(game->help_state) {
+                    case HELP_SCREEN1:
+                        if (pointInRect((Point){helpX, helpY}, nextButtonRect)) {
+                            game->help_state = HELP_SCREEN2;
+                            if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                        }
+                        break;
+                        
+                    case HELP_SCREEN2:
+                        if (pointInRect((Point){helpX, helpY}, prevButtonRect)) {
+                            game->help_state = HELP_SCREEN1;
+                            if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                        }
+                        else if (pointInRect((Point){helpX, helpY}, nextButtonRect)) {
+                            game->help_state = HELP_SCREEN3;
+                            if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                        }
+                        break;
+                        
+                    case HELP_SCREEN3:
+                        if (pointInRect((Point){helpX, helpY}, prevButtonRect)) {
+                            game->help_state = HELP_SCREEN2;
+                            if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                        }
+                        else if (pointInRect((Point){helpX, helpY}, exitButtonRect)) {
+                            game->currentState = GAME_STATE;
+                            if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                            return;
+                        }
+                        break;
+                        
+                    default:
+                        break;
+                }
+            }
+        }
+
+        // Rendering
+        SDL_FillRect(game->screen, NULL, SDL_MapRGB(game->screen->format, 0, 0, 0));
+        SDL_BlitSurface(game->gameBg, NULL, game->screen, NULL);
+        
+        // Draw overlay
+        SDL_BlitSurface(game->overlay, NULL, game->screen, NULL);
+        
+        // Draw help screen background
+        SDL_FillRect(game->screen, &helpScreenRect, SDL_MapRGB(game->screen->format, 255, 255, 255));
+        
+        // Draw current help screen
+        SDL_Surface *currentHelp = NULL;
+        switch(game->help_state) {
+            case HELP_SCREEN1: currentHelp = game->help1_img; break;
+            case HELP_SCREEN2: currentHelp = game->help2_img; break;
+            case HELP_SCREEN3: currentHelp = game->help3_img; break;
+            default: break;
+        }
+        
+        if (currentHelp) {
+            SDL_BlitSurface(currentHelp, NULL, game->screen, &helpScreenRect);
+            
+            // Draw navigation buttons
+            switch(game->help_state) {
+                case HELP_SCREEN1:
+                    SDL_BlitSurface(game->next_btn, NULL, game->screen, 
+                                  &(SDL_Rect){
+                                      helpScreenRect.x + nextButtonRect.x,
+                                      helpScreenRect.y + nextButtonRect.y,
+                                      nextButtonRect.w,
+                                      nextButtonRect.h
+                                  });
+                    break;
+                    
+                case HELP_SCREEN2:
+                    SDL_BlitSurface(game->prev_btn, NULL, game->screen, 
+                                  &(SDL_Rect){
+                                      helpScreenRect.x + prevButtonRect.x,
+                                      helpScreenRect.y + prevButtonRect.y,
+                                      prevButtonRect.w,
+                                      prevButtonRect.h
+                                  });
+                    SDL_BlitSurface(game->next_btn, NULL, game->screen, 
+                                  &(SDL_Rect){
+                                      helpScreenRect.x + nextButtonRect.x,
+                                      helpScreenRect.y + nextButtonRect.y,
+                                      nextButtonRect.w,
+                                      nextButtonRect.h
+                                  });
+                    break;
+                    
+                case HELP_SCREEN3:
+                    SDL_BlitSurface(game->prev_btn, NULL, game->screen, 
+                                  &(SDL_Rect){
+                                      helpScreenRect.x + prevButtonRect.x,
+                                      helpScreenRect.y + prevButtonRect.y,
+                                      prevButtonRect.w,
+                                      prevButtonRect.h
+                                  });
+                    SDL_BlitSurface(game->exit_btn, NULL, game->screen, 
+                                  &(SDL_Rect){
+                                      helpScreenRect.x + exitButtonRect.x,
+                                      helpScreenRect.y + exitButtonRect.y,
+                                      exitButtonRect.w,
+                                      exitButtonRect.h
+                                  });
+                    break;
+                    
+                default:
+                    break;
+            }
+        }
+
+        SDL_Flip(game->screen);
+        SDL_Delay(10);
+    }
+}
+
+void runMenu(GameData *game) {
+    SDL_Rect quizButtonRect = {
+        (game->screen->w / 2) - 200,
+        (game->screen->h / 2) - 200,
+        game->quizButton->w,
+        game->quizButton->h
+    };
+    
+    SDL_Rect puzzleButtonRect = {
+        (game->screen->w / 2) + 50,
+        quizButtonRect.y,
+        game->puzzleButton->w,
+        game->puzzleButton->h
+    };
+
+    if (game->bgMusic) {
+        Mix_PlayMusic(game->bgMusic, -1);
+    }
+
+    int wasHovering = 0;
+
+    while (game->currentState == MENU_STATE) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) {
+                game->currentState = GAMEOVER_STATE;
             }
             else if (event.type == SDL_KEYDOWN) {
                 if (event.key.keysym.sym == SDLK_ESCAPE) {
-                    running = 0;
+                    game->currentState = GAMEOVER_STATE;
                 }
             }
-            else if (event.type == SDL_MOUSEBUTTONDOWN && currentState == MENU_STATE) {
+            else if (event.type == SDL_MOUSEBUTTONDOWN) {
                 Point mouse = {event.button.x, event.button.y};
                 if (pointInRect(mouse, quizButtonRect)) {
-                    Mix_PlayChannel(-1, hoverSound, 0);
-                    if (enigmeMusic) Mix_HaltMusic();
-                    currentState = GAME_STATE;
-                    player = (PlayerStats){0, 3, 1, 0, 0};
+                    if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                    if (game->bgMusic) Mix_HaltMusic();
+                    game->currentState = GAME_STATE;
+                    game->player = (PlayerStats){0, 3, 1, 0, 0};
                 }
                 else if (pointInRect(mouse, puzzleButtonRect)) {
-                    Mix_PlayChannel(-1, hoverSound, 0);
-                    if (enigmeMusic) Mix_HaltMusic();
-                    currentState = PUZZLE_STATE;
-                    // Initialize puzzle game state here if needed
-                }
-                else if (pointInRect(mouse, otherButtonRect)) {
-                    Mix_PlayChannel(-1, hoverSound, 0);
-                    if (enigmeMusic) Mix_HaltMusic();
-                    currentState = OTHER_STATE;
-                    // Initialize your other program here
+                    if (game->clickSound) Mix_PlayChannel(-1, game->clickSound, 0);
+                    if (game->bgMusic) Mix_HaltMusic();
+                    game->currentState = PUZZLE_STATE;
                 }
             }
         }
@@ -717,89 +1253,68 @@ int main() {
         SDL_GetMouseState(&mouse.x, &mouse.y);
         int isHoveringQuiz = pointInRect(mouse, quizButtonRect);
         int isHoveringPuzzle = pointInRect(mouse, puzzleButtonRect);
-        int isHoveringOther = pointInRect(mouse, otherButtonRect);
+        int isHovering = isHoveringQuiz || isHoveringPuzzle;
 
-        // Play hover sound when entering a button
-        if ((isHoveringQuiz || isHoveringPuzzle || isHoveringOther) && lastHoveredButton == -1) {
-            if (sourisSound) Mix_PlayChannel(-1, sourisSound, 0);
+        // Play hover sound only when first entering hover state
+        if (isHovering && !wasHovering && game->hoverSound) {
+            Mix_PlayChannel(-1, game->hoverSound, 0);
         }
+        wasHovering = isHovering;
+
+        SDL_BlitSurface(game->menuBg, NULL, game->screen, NULL);
+        SDL_BlitSurface(isHoveringQuiz ? game->quizButtonHover : game->quizButton, 
+                       NULL, game->screen, &quizButtonRect);
+        SDL_BlitSurface(isHoveringPuzzle ? game->puzzleButtonHover : game->puzzleButton, 
+                       NULL, game->screen, &puzzleButtonRect);
         
-        // Track which button is being hovered
-        if (isHoveringQuiz) {
-            lastHoveredButton = 0;
-        } else if (isHoveringPuzzle) {
-            lastHoveredButton = 1;
-        } else if (isHoveringOther) {
-            lastHoveredButton = 2;
-        } else {
-            lastHoveredButton = -1;
-        }
-
-        switch(currentState) {
-            case MENU_STATE:
-                SDL_BlitSurface(menuBg, NULL, screen, NULL);
-                SDL_BlitSurface(isHoveringQuiz ? quizButtonHover : quizButton, NULL, screen, &quizButtonRect);
-                SDL_BlitSurface(isHoveringPuzzle ? puzzleButtonHover : puzzleButton, NULL, screen, &puzzleButtonRect);
-                SDL_BlitSurface(isHoveringOther ? otherButtonHover : otherButton, NULL, screen, &otherButtonRect);
-                break;
-                
-            case GAME_STATE:
-                runQuizGame(screen, font, questions, questionCount, font1);
-                if (currentState == GAMEOVER_STATE) {
-                    showGameOver(screen, font);
-                    currentState = MENU_STATE;
-                    if (enigmeMusic) Mix_PlayMusic(enigmeMusic, -1);
-                }
-                else if (currentState == WIN_STATE) {
-                    showWinScreen(screen, font);
-                    currentState = MENU_STATE;
-                }
-                break;
-                
-            case PUZZLE_STATE:
-                // Add your puzzle game function call here
-                // runPuzzleGame(screen, font);
-                
-                // Example structure for puzzle game:
-                // int puzzleResult = runPuzzleGame();
-                // if (puzzleResult == PUZZLE_COMPLETE) {
-                //     currentState = MENU_STATE;
-                //     if (enigmeMusic) Mix_PlayMusic(enigmeMusic, -1);
-                // }
-                break;
-                
-            case OTHER_STATE:
-                // Add your other program function call here
-                // runOtherProgram(screen, font);
-                break;
-        }
-
-        SDL_Flip(screen);
+        SDL_Flip(game->screen);
         SDL_Delay(10);
     }
+}
 
-    // Clean up resources
-    if (beepSound) Mix_FreeChunk(beepSound);
-    if (hoverSound) Mix_FreeChunk(hoverSound);
-    if (sourisSound) Mix_FreeChunk(sourisSound);
-    if (enigmeMusic) Mix_FreeMusic(enigmeMusic);
-    if (winMusic) Mix_FreeMusic(winMusic);
-    if (gameOverMusic) Mix_FreeMusic(gameOverMusic);
-    Mix_CloseAudio();
+// Main function
+int main() {
+    GameData game = {0};
     
-    SDL_FreeSurface(menuBg);
-    SDL_FreeSurface(quizButton);
-    SDL_FreeSurface(quizButtonHover);
-    SDL_FreeSurface(puzzleButton);
-    SDL_FreeSurface(puzzleButtonHover);
-    SDL_FreeSurface(otherButton);
-    SDL_FreeSurface(otherButtonHover);
-    
-    TTF_CloseFont(font);
-    TTF_CloseFont(font1);
-    IMG_Quit();
-    TTF_Quit();
-    SDL_Quit();
-    
+    if (!initGame(&game)) {
+        cleanupGame(&game);
+        return 1;
+    }
+
+    while (game.currentState != GAMEOVER_STATE) {
+        switch (game.currentState) {
+            case MENU_STATE:
+                runMenu(&game);
+                break;
+            case GAME_STATE:
+                game.help_state = HELP_SCREEN1; // Reset help screen when entering quiz
+                runQuizGame(&game);
+                break;
+            case PUZZLE_STATE:
+                game.help_state = HELP_SCREEN4; // Reset help screen when entering puzzle
+                runPuzzleGame(&game);
+                break;
+            case HELP_STATE:
+                runHelpSystem(&game);
+                break;
+            case PUZZLE_HELP_STATE:
+                runPuzzleHelpSystem(&game);
+                break;
+            case WIN_STATE:
+                if (game.winMusic) Mix_PlayMusic(game.winMusic, 0);
+                showWinScreen(&game);
+                game.currentState = MENU_STATE;
+                if (game.bgMusic) Mix_PlayMusic(game.bgMusic, -1);
+                break;
+            case GAMEOVER_STATE:
+                if (game.gameOverMusic) Mix_PlayMusic(game.gameOverMusic, 0);
+                showGameOver(&game);
+                game.currentState = MENU_STATE;
+                if (game.bgMusic) Mix_PlayMusic(game.bgMusic, -1);
+                break;
+        }
+    }
+
+    cleanupGame(&game);
     return 0;
 }
