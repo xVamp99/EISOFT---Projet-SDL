@@ -1,95 +1,100 @@
-Quelle est la capitale de la France ?
-Paris
-Lyon
-Marseille
-0
-Qui a peint la Joconde ?
-Vincent van Gogh
-Léonard de Vinci
-Pablo Picasso
-1
-Quel est le plus grand océan du monde ?
-Océan Atlantique
-Océan Pacifique
-Océan Indien
-1
-En quelle année a eu lieu la Révolution française ?
-1789
-1815
-1905
-0
-Quel est l'élément chimique représenté par le symbole 'O' ?
-Or
-Oxygène
-Osmium
-1
-Quel pays a remporté la Coupe du Monde de football en 2018 ?
-Brésil
-Allemagne
-France
+What is the first step to building self-confidence?
+Avoid
+Compare
+Accept
 2
-Quelle est la planète la plus proche du Soleil ?
-Vénus
-Mercure
-Mars
-1
-Qui a écrit "Roméo et Juliette" ?
-Charles Dickens
-William Shakespeare
-Jane Austen
-1
-Combien de continents y a-t-il sur Terre ?
-5
-6
-7
+Which practice helps you know yourself better?
+Ignore
+TV
+Journal
 2
-Quel est l'animal national de l'Australie ?
-Kangourou
-Koala
-Émeu
+What does "stepping out of your comfort zone" mean?
+Stay
+Run away
+Try
+2
+What is the role of failure in growth?
+Learn
+Hate
+Give up
 0
-Qui a inventé la théorie de la relativité ?
-Isaac Newton
-Albert Einstein
-Stephen Hawking
-1
-Quelle est la plus haute montagne du monde ?
-K2
-Mont Everest
-Mont Kilimandjaro
-1
-Quel est le plus grand désert du monde ?
-Sahara
-Désert d'Arabie
-Antarctique
+How can you build self-esteem?
+Criticize
+Wait
+Set goals
 2
-Quel pays est surnommé "le pays du soleil levant" ?
-Chine
-Japon
-Corée du Sud
-1
-Quelle est la langue la plus parlée au monde ?
-Anglais
-Mandarin
-Espagnol
-1
-Quel est le plus long fleuve du monde ?
-Nil
-Amazone
-Yangzi Jiang
-1
-Qui a découvert la pénicilline ?
-Louis Pasteur
-Alexander Fleming
-Marie Curie
-1
-Quelle est la vitesse de la lumière ?
-300 000 km/s
-150 000 km/s
-450 000 km/s
-0
-Quel est le plus grand pays du monde par superficie ?
-Canada
-Chine
-Russie
+Which phrase boosts confidence?
+Useless
+Perfect
+Capable
 2
+Which technique reduces stress?
+Nothing
+Escape
+Breathing
+2
+What does positive self-talk symbolize?
+Silence
+Criticism
+Kindness
+2
+Why celebrate your successes?
+Forget
+Vanity
+Motivation
+2
+Which behavior shows low self-esteem?
+Say no
+Smile
+Doubt
+2
+How to overcome fear of judgment?
+Copy
+Yourself
+Hide
+1
+Which book talks about confidence?
+Cooking
+5 Second Rule
+Novels
+1
+Who said "Know thyself"?
+Mother Teresa
+Socrates
+Einstein
+1
+Which hormone reduces stress?
+Adrenaline
+Cortisol
+Oxytocin
+2
+Meditation helps with:
+Distraction
+Forgetfulness
+Presence
+2
+A growth mindset believes in:
+Chance
+Destiny
+Progress
+2
+Letting go means:
+Force
+Accept
+Control
+1
+Which tool boosts productivity?
+Multitasking
+Social media
+To-do list
+2
+Gratitude builds:
+Dependence
+Passivity
+Optimism
+2
+How long does it take to form a habit?
+1 year
+21 days
+1 day
+1
